@@ -1,3 +1,10 @@
+Coordia beta v0.1 by Tinkerine Studio
+Coordia is based on Pronterface and runs skeinforge in the background for slice commands (with pypy for quicker slicing).
+
+For questions, comments or feedback, feel free to email: support@tinkerines.com 
+
+
+
 Printrun consists of printcore, pronsole and pronterface, and a small collection of helpful scripts.
 
   * printcore.py is a library that makes writing reprap hosts easy
@@ -5,101 +12,20 @@ Printrun consists of printcore, pronsole and pronterface, and a small collection
   * pronterface.py is a graphical host software with the same functionality as pronsole
   * webinterface.py is a browser-usable remote control function for Pronterface
 
-# GETTING PRINTRUN
-
-This section suggests using precompiled binaries, this way you get everything bundled into one single package for an easy installation.
-
-If you want the newest, shiniest features, you can run Printrun from source using the instructions further down this README.
 
 ## Windows
 
-A precompiled version is available at http://koti.kapsi.fi/~kliment/printrun/
+A precompiled version is available at http://www.tinkerines.com/forum/?page_id=5/coordia/coordia-ditto-control-host-beta
 
 ## Mac OS X
 
-A precompiled version is available at http://koti.kapsi.fi/~kliment/printrun/
-
-## Linux
-### Ubuntu/Debian
-
-You can run Printrun directly from source, as there are no packages available yet. Fetch and install the dependencies using
-
-`sudo apt-get install python-serial python-wxgtk2.8 python-pyglet`
-
-### Fedora 15 and newer
-
-You can run Printrun directly from source, as there are no packages available yet. Fetch and install the dependencies using
-
-`sudo yum install pyserial wxpython pyglet`
-
-### Archlinux
-
-Packages are available in AUR. Just run
-
-`yaourt printrun`
-
-and enjoy the `pronterface`, `pronsole`, ... commands directly.
-
-# USING PRONTERFACE
-
-When you're done setting up Printrun, you can start pronterface.py in the directory you unpacked it.
-Select the port name you are using from the first drop-down, select your baud rate, and hit connect.
-Load an STL (see the note on skeinforge below) or GCODE file, and you can upload it to SD or print it directly.
-The "monitor printer" function, when enabled, checks the printer state (temperatures, SD print progress) every 3 seconds.
-The command box recognizes all pronsole commands, but has no tabcompletion.
-
-If you want to load stl files, you need to install a slicing program such as Slic3r and add its path to the settings.
-See the Slic3r readme for more details on integration.
-
-# Using the browser interface
-
-To run the web interface, install Cherrypy and run Pronterface as described above.
-The www server will start on the port/address you have chosen.
-
-## Webinterface Dependencies 
-
-Cherrypy is required for the web interface.  Download and install it by opening a 
-command prompt in its directory and running python setup.py install.
-
-## Webinterface Configuration
-  * The Web interface port / ip is configurable in http.config
-  * The Default User / Password can be set in auth.config
-  
-## Webinterface Styling
-  * css/style.css can be modified to change the style of the Web Interface.
- 
+There unfortunately isn't one yet, but it's coming!
 
 
-# USING PRONSOLE
+# Running from Source
 
-To use pronsole, you need:
+Running Coordia from source requires everything pronterface needs; the following has been copied from the pronterface readme:
 
-  * python (ideally 2.6.x or 2.7.x),
-  * pyserial (or python-serial on ubuntu/debian) and
-  * pyreadline (not needed on Linux)
-
-Start pronsole and you will be greeted with a command prompt. Type help to view the available commands.
-All commands have internal help, which you can access by typing "help commandname", for example "help connect"
-
-If you want to load stl files, you need to put a version of skeinforge (doesn't matter which one) in a folder called "skeinforge".
-The "skeinforge" folder must be in the same folder as pronsole.py
-
-# USING PRINTCORE
-
-To use printcore you need python (ideally 2.6.x or 2.7.x) and pyserial (or python-serial on ubuntu/debian)
-See pronsole for an example of a full-featured host, the bottom of printcore.py for a simple command-line
-sender, or the following code example:
-
-    p=printcore('/dev/ttyUSB0',115200)
-    p.startprint(data) # data is an array of gcode lines
-    p.send_now("M105") # sends M105 as soon as possible
-    p.pause()
-    p.resume()
-    p.disconnect()
-
-# RUNNING FROM SOURCE
-
-Run Printrun for source if you want to test out the latest features.
 
 ## Dependencies
 
@@ -167,16 +93,17 @@ Then repeat the same with http://http://pyglet.googlecode.com/files/pyglet-1.1.4
 # LICENSE
 
 ```
-Printrun is free software: you can redistribute it and/or modify
+By using this software, you agree to the following conditions:
+Use this software at your own risk. The program is provided as is without any guarantees or warranty.
+Tinkerine Studio is not responsible for any damage to your machine (although highly unlikely) caused by the use of the software.
+
+For questions, comments or feedback, feel free to email: support@tinkerines.com 
+
+Coordia is open source software; you are free to distribute and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-Printrun is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
+For a copy of the GNU General Public License, see http://www.gnu.org/licenses/
 
-You should have received a copy of the GNU General Public License
-along with Printrun.  If not, see <http://www.gnu.org/licenses/>.
 ```

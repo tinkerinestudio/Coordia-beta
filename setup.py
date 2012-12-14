@@ -1,152 +1,164 @@
-#!/usr/bin/env python
+# A setup script showing advanced features.
+#
+# Note that for the NT service to build correctly, you need at least
+# win32all build 161, for the COM samples, you need build 163.
+# Requires wxPython, and Tim Golden's WMI module.
 
-# This file is part of the Printrun suite.
-#
-# Printrun is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# Printrun is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Printrun.  If not, see <http://www.gnu.org/licenses/>.
+# Note: WMI is probably NOT a good example for demonstrating how to
+# include a pywin32 typelib wrapper into the exe: wmi uses different
+# typelib versions on win2k and winXP.  The resulting exe will only
+# run on the same windows version as the one used to build the exe.
+# So, the newest version of wmi.py doesn't use any typelib anymore.
 
-import sys, os, glob
-import subprocess
-from stat import *
 from distutils.core import setup
-from distutils.command.install import install as _install
-from distutils.command.install_data import install_data as _install_data
+import py2exe
+import sys
 
-INSTALLED_FILES = "installed_files"
+# If run without args, build executables, in quiet mode.
+if len(sys.argv) == 1:
+    sys.argv.append("py2exe")
+    sys.argv.append("-q")
 
-class install (_install):
+class Target:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+        # for the versioninfo resources
+        self.version = "0.5.0"
+        self.company_name = "No Company1234"
+        self.copyright = "no copyright"
+        self.name = "py2exe sample files"
 
-    def run (self):
-        _install.run (self)
-        outputs = self.get_outputs ()
-        length = 0
-        if self.root:
-            length += len (self.root)
-        if self.prefix:
-            length += len (self.prefix)
-        if length:
-            for counter in xrange (len (outputs)):
-                outputs[counter] = outputs[counter][length:]
-        data = "\n".join (outputs)
-        try:
-            file = open (INSTALLED_FILES, "w")
-        except:
-            self.warn ("Could not write installed files list %s" % \
-                       INSTALLED_FILES)
-            return
-        file.write (data)
-        file.close ()
+################################################################
+# A program using wxPython
 
-class install_data (_install_data):
+# The manifest will be inserted as resource into test_wx.exe.  This
+# gives the controls the Windows XP appearance (if run on XP ;-)
+#
+# Another option would be to store it in a file named
+# test_wx.exe.manifest, and copy it with the data_files option into
+# the dist-dir.
+#
 
-    def run (self):
-        def chmod_data_file (file):
-            try:
-                os.chmod (file, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
-            except:
-                self.warn ("Could not chmod data file %s" % file)
-        _install_data.run (self)
-        map (chmod_data_file, self.get_outputs ())
+manifest_template = """
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity
+    version="5.0.0.0"
+    processorArchitecture="x86"
+    name="%(prog)s"
+    type="win32"
+  />
+  <description>%(prog)s</description>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel
+            level="asInvoker"
+            uiAccess="false">
+        </requestedExecutionLevel>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+            type="win32"
+            name="Microsoft.VC90.CRT"
+            version="9.0.21022.8"
+            processorArchitecture="x86"
+            publicKeyToken="1fc8b3b9a1e18e3b">
+      </assemblyIdentity>
+    </dependentAssembly>
+  </dependency>
+  <dependency>
+    <dependentAssembly>
+        <assemblyIdentity
+            type="win32"
+            name="Microsoft.Windows.Common-Controls"
+            version="6.0.0.0"
+            processorArchitecture="X86"
+            publicKeyToken="6595b64144ccf1df"
+            language="*"
+        />
+    </dependentAssembly>
+  </dependency>
+</assembly>
+"""
 
-class uninstall (_install):
+RT_MANIFEST = 24
 
-    def run (self):
-        try:
-            file = open (INSTALLED_FILES, "r")
-        except:
-            self.warn ("Could not read installed files list %s" % \
-                       INSTALLED_FILES)
-            return
-        files = file.readlines ()
-        file.close ()
-        prepend = ""
-        if self.root:
-            prepend += self.root
-        if self.prefix:
-            prepend += self.prefix
-        if len (prepend):
-            for counter in xrange (len (files)):
-                files[counter] = prepend + files[counter].rstrip ()
-        for file in files:
-            print "Uninstalling %s" % file
-            try:
-                os.unlink (file)
-            except:
-                self.warn ("Could not remove file %s" % file)
+Coordia = Target(
+    # used for the versioninfo resource
+    description = "A sample GUI app",
 
-ops = ("install", "build", "sdist", "uninstall", "clean")
+    # what to build
+    script = "Coordia.py",
+    other_resources = [(RT_MANIFEST, 1, manifest_template % dict(prog="Coordia"))],
+    icon_resources = [(1, "coordia.ico")],
+    dest_base = "Coordia")
 
-if len (sys.argv) < 2 or sys.argv[1] not in ops:
-    print "Please specify operation : %s" % " | ".join (ops)
-    raise SystemExit
+test_wx_console = Target(
+    # used for the versioninfo resource
+    description = "A sample GUI app with console blah!",
 
-prefix = None
-if len (sys.argv) > 2:
-    i = 0
-    for o in sys.argv:
-        if o.startswith ("--prefix"):
-            if o == "--prefix":
-                if len (sys.argv) >= i:
-                    prefix = sys.argv[i + 1]
-                sys.argv.remove (prefix)
-            elif o.startswith ("--prefix=") and len (o[9:]):
-                prefix = o[9:]
-            sys.argv.remove (o)
-        i += 1
-if not prefix and "PREFIX" in os.environ:
-    prefix = os.environ["PREFIX"]
-if not prefix or not len (prefix):
-    prefix = "/usr/local"
+    # what to build
+    script = "pronterface.py",
+    other_resources = [(RT_MANIFEST, 1, manifest_template % dict(prog="test_wx"))],
+    dest_base = "test_wx_console")
 
-if sys.argv[1] in ("install", "uninstall") and len (prefix):
-    sys.argv += ["--prefix", prefix]
+################################################################
+# A program using early bound COM, needs the typelibs option below
+test_wmi = Target(
+    description = "Early bound COM client example",
+    script = "test_wmi.py",
+    )
 
-target_images_path = "share/pronterface/images/"
-data_files = [('share/pixmaps/', ['P-face.ico','plater.ico'])]
+################################################################
+# a NT service, modules is required
+myservice = Target(
+    # used for the versioninfo resource
+    description = "A sample Windows NT service",
+    # what to build.  For a service, the module name (not the
+    # filename) must be specified!
+    modules = ["MyService"]
+    )
 
-for basedir, subdirs, files in os.walk("images"):
-    images = []
-    for filename in files:
-        if filename.find(".svg") or filename.find(".png"):
-            file_path = os.path.join(basedir, filename)
-            images.append(file_path)
-    data_files.append((target_images_path + basedir[len("images/"):], images))
+################################################################
+# a COM server (exe and dll), modules is required
+#
+# If you only want a dll or an exe, comment out one of the create_xxx
+# lines below.
 
-for basedir, subdirs, files in os.walk("locale"):
-    if not basedir.endswith("LC_MESSAGES"):
-        continue
-    destpath = os.path.join("share", "pronterface", basedir)
-    files = filter(lambda x: x.endswith(".mo"), files)
-    files = map(lambda x: os.path.join(basedir, x), files)
-    data_files.append ((destpath, files))
+interp = Target(
+    description = "Python Interpreter as COM server module",
+    # what to build.  For COM servers, the module name (not the
+    # filename) must be specified!
+    modules = ["win32com.servers.interp"],
+##    create_exe = False,
+##    create_dll = False,
+    )
 
-extra_data_dirs = ["css"]
-for extra_data_dir in extra_data_dirs:
-    for basedir, subdirs, files in os.walk(extra_data_dir):
-        files = map(lambda x: os.path.join(basedir, x), files)
-        destpath = os.path.join("share", "pronterface", basedir)
-        data_files.append ((destpath, files))
+################################################################
+# COM pulls in a lot of stuff which we don't want or need.
 
-setup (
-        name             = "Printrun",
-        description      = "Host software for 3D printers",
-        author           = "Kliment Yanev",
-        url              = "http://github.com/kliment/Printrun/",
-        license          = "GPLv3",
-        data_files       = data_files,
-        packages         = ["printrun", "printrun.svg"],
-        scripts          = ["pronsole.py", "pronterface.py", "plater.py", "printcore.py"],
-        cmdclass         = {"uninstall" : uninstall,
-                            "install" : install,
-                            "install_data" : install_data}
-     )
+excludes = ["pywin", "pywin.debugger", "pywin.debugger.dbgcon",
+            "pywin.dialogs", "pywin.dialogs.list"]
+
+setup(
+    options = {"py2exe": {"typelibs":
+                          # typelib for WMI
+                          [('{565783C6-CB41-11D1-8B02-00600806D9B6}', 0, 1, 2)],
+                          # create a compressed zip archive
+                          "compressed": 1,
+                          "optimize": 2,
+                          "excludes": excludes,
+                          "dll_excludes": [ "MSVCP90.dll" ] }},
+    # The lib directory contains everything except the executables and the python dll.
+    # Can include a subdirectory name.
+    zipfile = "lib/shared.zip",
+
+    #service = [myservice],
+    #com_server = [interp],
+    #console = [test_wx_console, test_wmi],
+    windows = [Coordia],
+    )
