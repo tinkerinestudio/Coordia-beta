@@ -24,7 +24,11 @@ A precompiled version is available at http://www.tinkerines.com/forum/?page_id=5
 
 # Running from Source
 
-Running Coordia from source requires everything pronterface needs; the following has been copied from the pronterface readme:
+Running Coordia from source requires:
+-A version of skeinforge (put the folders "skeinforge_application" and "fabmetheus_utilities" in the root of Coordia)
+-Everything pronterface needs.
+
+The following has been copied from the pronterface readme:
 
 
 ## Dependencies
