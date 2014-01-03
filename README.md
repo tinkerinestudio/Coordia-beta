@@ -1,4 +1,4 @@
-Coordia beta v0.1 by Tinkerine Studio
+Coordia beta v0.2.2 by Tinkerine Studio
 Coordia is based on Pronterface and runs skeinforge in the background for slice commands (with pypy for quicker slicing).
 
 For questions, comments or feedback, feel free to email: support@tinkerines.com 
@@ -19,7 +19,7 @@ A precompiled version is available at http://www.tinkerines.com/forum/?page_id=5
 
 ## Mac OS X
 
-There unfortunately isn't one yet, but it's coming!
+A precompiled version is available at http://www.tinkerines.com/forum/?page_id=5/coordia/coordia-ditto-control-host-beta
 
 
 # Running from Source

@@ -321,17 +321,17 @@ class XYZButtons(BufferedCanvas):
                     
                 elif ftn[-1:] == "X":
                     self.moveCallback("h",0,0)
-                    print("homing X")
+                    print("Homing X")
                 elif ftn[-1:] == "Y":
                     self.moveCallback(0,"h",0)
-                    print("homing Y")
+                    print("Homing Y")
                 elif ftn[-1:] == "Z":
                     self.moveCallback(0,0,"h")
-                    print("homing Z")
+                    print("Homing Z")
                     
                 elif ftn[-1:] == "A":
                     self.moveCallback("h","h","h")
-                    print("homing All")
+                    print("Homing All")
                 
                 #elif ftn[-1:] == "X" and (mpos[0]*-1)-mpos[1] > -103:
                 #    self.moveCallback("h",0,0)

@@ -10,6 +10,12 @@
 # run on the same windows version as the one used to build the exe.
 # So, the newest version of wmi.py doesn't use any typelib anymore.
 
+###NOTE TO SELF###
+#You have to put in the skeinforge folder in dist/lib/shared.zip and fabmetheus_utilities+skeinforge_application into dist for it to work!
+#Also include: coordia.ico, msvcp71.dll, msvcp90.dll, python27.dll
+#Also put python27.dll into python
+#Also put images into dist and lib
+
 from distutils.core import setup
 import py2exe
 import sys
@@ -23,10 +29,10 @@ class Target:
     def __init__(self, **kw):
         self.__dict__.update(kw)
         # for the versioninfo resources
-        self.version = "0.5.0"
-        self.company_name = "No Company1234"
+        self.version = "0.2.2"
+        self.company_name = "Tinkerine Studio"
         self.copyright = "no copyright"
-        self.name = "py2exe sample files"
+        self.name = "Coordia0.2.2"
 
 ################################################################
 # A program using wxPython
@@ -89,7 +95,7 @@ RT_MANIFEST = 24
 
 Coordia = Target(
     # used for the versioninfo resource
-    description = "A sample GUI app",
+    description = "Coordia 0.2.2",
 
     # what to build
     script = "Coordia.py",
@@ -150,9 +156,9 @@ setup(
                           [('{565783C6-CB41-11D1-8B02-00600806D9B6}', 0, 1, 2)],
                           # create a compressed zip archive
                           "compressed": 1,
-                          "optimize": 2,
+                          "optimize": 0,
                           "excludes": excludes,
-                          "dll_excludes": [ "MSVCP90.dll" ] }},
+                          "dll_excludes": [ "MSVCP90.dll","python25.dll" ]  }},
     # The lib directory contains everything except the executables and the python dll.
     # Can include a subdirectory name.
     zipfile = "lib/shared.zip",

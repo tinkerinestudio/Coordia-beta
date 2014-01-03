@@ -1,4 +1,4 @@
-Coordia beta v0.1 by Tinkerine Studio
+Coordia beta v0.2.2 by Tinkerine Studio
 Coordia is based on Pronterface and runs skeinforge in the background for slice commands (with pypy for quicker slicing).
 
 By using this software, you agree to the following conditions:

@@ -101,7 +101,9 @@ def totalelength(g):
                 pass
         elif "G92" in i and "E0" in i:
             tot+=cur
+    tot+=cur
     return tot
+    
 
 def get_coordinate_value(axis, parts):
     for i in parts:
@@ -197,10 +199,10 @@ class Settings:
         self.temperature_abs = 230
         self.temperature_pla = 185
         self.xy_feedrate = 3000
-        self.z_feedrate = 200
+        self.z_feedrate = 900
         self.e_feedrate = 300
-        self.slicecommand="python skeinforge/skeinforge_application/skeinforge_utilities/skeinforge_craft.py $s"
-        self.sliceoptscommand="python skeinforge/skeinforge_application/skeinforge.py"
+        self.slicecommand="pypy.exe skeinforge_application/skeinforge_utilities/skeinforge_craft.py $s"
+        self.sliceoptscommand="pythonw.exe skeinforge_application/skeinforge.py"
 
     def _set(self,key,value):
         try:
@@ -268,8 +270,8 @@ class pronsole(cmd.Cmd):
         self.helpdict["bedtemp_pla"] = _("Heated Build Platform temp for PLA (default: 60 deg C)")
         self.helpdict["e_feedrate"] = _("Feedrate for Control Panel Moves in Extrusions (default: 300mm/min)")
         self.helpdict["port"] = _("Port used to communicate with printer")
-        self.helpdict["slicecommand"] = _("Slice command\n   default:\n       python skeinforge/skeinforge_application/skeinforge_utilities/skeinforge_craft.py $s)")
-        self.helpdict["sliceoptscommand"] = _("Slice settings command\n   default:\n       python skeinforge/skeinforge_application/skeinforge.py")
+        self.helpdict["slicecommand"] = _("Slice command\n   default:\n       pypy/pypy.exe skeinforge_application/skeinforge_utilities/skeinforge_craft.py $s)")
+        self.helpdict["sliceoptscommand"] = _("Slice settings command\n   default:\n       python/pythonw.exe skeinforge_application/skeinforge.py")
         self.helpdict["temperature_abs"] = _("Extruder temp for ABS (default: 230 deg C)")
         self.helpdict["temperature_pla"] = _("Extruder temp for PLA (default: 185 deg C)")
         self.helpdict["xy_feedrate"] = _("Feedrate for Control Panel Moves in X and Y (default: 3000mm/min)")
@@ -502,7 +504,7 @@ class pronsole(cmd.Cmd):
         finally:
             self.processing_rc=False
     
-    def load_default_rc(self,rc_filename=".coordiarc"): #justin: changed to .coordiarc so it doesn't use old pronterface settings. #MAC
+    def load_default_rc(self,rc_filename=".coordiarc0.2"): #justin: changed to .coordiarc0.2 so it doesn't use old pronterface settings. #MAC
         try:
             try:
                 self.load_rc(os.path.join(os.path.expanduser("~"),rc_filename))

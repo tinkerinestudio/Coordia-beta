@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 
-#Coordia beta v0.1 by Tinkerine Studio
+#Coordia beta v0.2.2 by Tinkerine Studio
 #Coordia is based on Pronterface and runs skeinforge in the background for slice commands (with pypy for quicker slicing).
 
 #By using this software, you agree to the following conditions:
 #Use this software at your own risk. The program is provided as is without any guarantees or warranty.
 #Tinkerine Studio is not responsible for any damage to your machine (although highly unlikely) caused by the use of the software.
 
-#For questions, comments or feedback, feel free to email: support@tinkerines.com 
+#For questions, comments or feedback, feel free to email: support@tinkerines.com
 
 #Coordia is open source software; you are free to distribute and/or modify
 #it under the terms of the GNU General Public License as published by
@@ -18,7 +18,10 @@
 
 # Set up Internationalization using gettext
 # searching for installed locales on /usr/share; uses relative folder if not found (windows)
-import os, gettext, Queue, re, math
+from __future__ import absolute_import
+import os, gettext, Queue, re, math, csv
+
+versionString = "0.2.2"
 
 if os.path.exists('/usr/share/pronterface/locale'):
     gettext.install('pronterface', '/usr/share/pronterface/locale', unicode=1)
@@ -43,15 +46,51 @@ if os.name=="nt":
     winsize=(800,530)
     try:
         import _winreg
+        import _winreg2
     except:
         pass
 
 import testcsv
+import testprofilesave
+import time
+import shutil
+
+import firmwareInstall
+
+from skeinforge_application import skeinforge
 
 from xybuttons import XYButtons
 from xyzbuttons import XYZButtons
 from graph import Graph
 import pronsole
+from fabmetheus_utilities import settings
+from fabmetheus_utilities import archive
+from fabmetheus_utilities import *
+
+from skeinforge_application.skeinforge_utilities import skeinforge_profile
+from skeinforge_application.skeinforge_plugins.craft_plugins import temperature
+from skeinforge_application.skeinforge_plugins.craft_plugins import carve
+from skeinforge_application.skeinforge_plugins.craft_plugins import fill
+from skeinforge_application.skeinforge_plugins.craft_plugins import skirt
+from skeinforge_application.skeinforge_plugins.craft_plugins import dimension
+from skeinforge_application.skeinforge_plugins.craft_plugins import speed
+from skeinforge_application.skeinforge_plugins.craft_plugins import cool
+from skeinforge_application.skeinforge_plugins.craft_plugins import raft
+from skeinforge_application.skeinforge_plugins.craft_plugins import jitter
+from skeinforge_application.skeinforge_plugins.craft_plugins import multiply
+
+import yagv
+
+settings.getReadRepository( temperature.TemperatureRepository() )
+settings.getReadRepository( carve.CarveRepository() )
+settings.getReadRepository( fill.FillRepository() )
+settings.getReadRepository( skirt.SkirtRepository() )
+settings.getReadRepository( dimension.DimensionRepository() ) 
+settings.getReadRepository( speed.SpeedRepository() ) 
+settings.getReadRepository( cool.CoolRepository() )
+settings.getReadRepository( raft.RaftRepository() )
+settings.getReadRepository( jitter.JitterRepository() )
+settings.getReadRepository( multiply.MultiplyRepository() )
 
 def dosify(name):
     return os.path.split(name)[1].split(".")[0][:8]+".g"
@@ -72,8 +111,38 @@ class Tee(object):
 
 class PronterWindow(wx.Frame,pronsole.pronsole):
     def __init__(self, filename=None,size=winsize):
+        
+        #print archive.getProfilesPath(skeinforge_profile.getProfileDirectory())# C:\Users\Just\.coordia\profiles\extrusion.csv
+        #print archive.getProfilesPath('extrusion.csv') #C:\Users\Just\.coordia\profiles\extrusion\[profile name]
+        #print profilePluginSettings.profileList.value
+        pluginModule = skeinforge_profile.getCraftTypePluginModule()
+        profilePluginSettings = settings.getReadRepository(pluginModule.getNewRepository())
+        
+        tempProfileName = self.getCurrentProfile()
+        for profileName in profilePluginSettings.profileList.value:
+            self.skeintest2(profileName) #skeintest2 sets the current profile!
+            settings.getReadRepository( temperature.TemperatureRepository() ) #todo: do the rest!
+            settings.getReadRepository( carve.CarveRepository() ) #todo: do the rest!
+            settings.getReadRepository( fill.FillRepository() ) #todo: do the rest!
+            settings.getReadRepository( skirt.SkirtRepository() ) #todo: do the rest!
+            settings.getReadRepository( dimension.DimensionRepository() ) #todo: do the rest!
+            settings.getReadRepository( speed.SpeedRepository() ) #todo: do the rest!
+            settings.getReadRepository( cool.CoolRepository() ) #todo: do the rest!
+            settings.getReadRepository( raft.RaftRepository() ) #todo: do the rest!
+            settings.getReadRepository( jitter.JitterRepository() ) #todo: do the rest!
+            settings.getReadRepository( multiply.MultiplyRepository() ) #todo: do the rest!
+            try:
+                with open(archive.getProfilesPath('extrusion/'+self.getCurrentProfile()+'/skeinforge.csv')) as f: pass
+            except IOError as e:
+                print e
+                shutil.copy2('skeinforge_application/skeinforge.csv',archive.getProfilesPath('extrusion/'+self.getCurrentProfile()+'/skeinforge.csv'))
+                shutil.copy2('skeinforge_application/skeinforge_craft.csv',archive.getProfilesPath('extrusion/'+self.getCurrentProfile()+'/skeinforge_craft.csv'))
+        self.skeintest2(tempProfileName)
+
 
         pronsole.pronsole.__init__(self)
+
+        self.programname = "Coordia "
         self.dummy_log=wx.LogNull()
         self.settings.build_dimensions = '200x200x100+0+0+0' #default build dimensions are 200x200x100 with 0,0,0 in the corner of the bed
         self.settings.last_bed_temperature = 0.0
@@ -83,15 +152,15 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         self.settings.preview_grid_step1 = 10.
         self.settings.preview_grid_step2 = 50.
         #self.settings.bgcolor = "#FFFFFF"
-        
+
         self.settings.baudrate = 250000
         self.settings.e_feedrate = 300
         self.settings.xy_feedrate = 3000
-        self.settings.z_feedrate = 200
-        self.settings.slicecommand = "pypy/pypy.exe skeinforge/skeinforge_application/skeinforge_utilities/skeinforge_craft.py $s"
-        self.settings.sliceoptscommand = "python/python.exe skeinforge/skeinforge_application/skeinforge.py"
+        self.settings.z_feedrate = 8*60
+        self.settings.slicecommand = "pypy/pypy.exe skeinforge_application/skeinforge_utilities/skeinforge_craft.py $s"
+        self.settings.sliceoptscommand = "python/pythonw.exe skeinforge_application/skeinforge.py"
         self.settings.home_on_start = "true"
-        
+
         self.helpdict["build_dimensions"] = _("Dimensions of Build Platform\n & optional offset of origin\n\nExamples:\n   XXXxYYY\n   XXX,YYY,ZZZ\n   XXXxYYYxZZZ+OffX+OffY+OffZ")
         self.helpdict["last_bed_temperature"] = _("Last Set Temperature for the Heated Print Bed")
         self.helpdict["last_file_path"] = _("Folder of last opened file")
@@ -103,7 +172,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         self.helpdict["home_on_start"] = _("Home X and Y upon connecting to printer (default: true)")
         self.filename=filename
         os.putenv("UBUNTU_MENUPROXY","0")
-        wx.Frame.__init__(self,None,title=_("Coordia"),size=size,style= wx.MINIMIZE_BOX 
+        wx.Frame.__init__(self,None,title=_("Coordia " +versionString),size=size,style= wx.MINIMIZE_BOX
 	| wx.SYSTEM_MENU | wx.CAPTION | wx.CLOSE_BOX); #| wx.RESIZE_BORDER| wx.MAXIMIZE_BOX |
         self.SetIcon(wx.Icon("coordia.ico",wx.BITMAP_TYPE_ICO))
         self.panel=wx.Panel(self,-1,size=size)
@@ -170,10 +239,18 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         self.cur_button=None
         self.hsetpoint=0.0
         self.bsetpoint=0.0
-        
+
         self.tempstatus=1
         self.initialhome=0
-        
+
+    def getCurrentProfile(self):
+        csv.register_dialect('tab', delimiter='\t')
+        row_reader = csv.reader(open(archive.getProfilesPath('extrusion.csv'), "rb"), 'tab')
+        for row in row_reader:
+            if row[0] == 'Profile Selection::':
+                #print "1/2 way there"
+                #self.tempProfileName = row[1]
+                return row[1]
     def startcb(self):
         self.starttime=time.time()
         print "Print Started at: " +time.strftime('%H:%M:%S',time.localtime(self.starttime))
@@ -187,7 +264,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
             self.printbtn.SetBitmapLabel(wx.Bitmap('images/print_3.png'))
             self.printbtn.SetToolTipString(_("Start Print"))
             self.printbtn.Bind(wx.EVT_BUTTON,self.printfile)
-            
+
             self.stopbtn.Bind(wx.EVT_BUTTON,self.motorsoff)
             self.stopbtn.SetToolTipString(_("Turn Motors Off"))
             self.stopbtn.SetBitmapLabel(wx.Bitmap('images/motors_1.png'))
@@ -199,11 +276,11 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         self.connectbtn.SetToolTipString(_("Disconnect Printer"))
         self.connectbtn.SetLabel, _("Disconnect")
         self.connectbtn.Bind(wx.EVT_BUTTON,self.disconnect)
-        
+
         self.monitor=1 #justin: always monitoring
-        
+
         #justin: enabling stuff moved to statuschecker
-            
+
     def sentcb(self,line):
         if("G1" in line):
             if("Z" in line):
@@ -213,7 +290,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
                         #self.progressbar1.Refresh()
                         self.curlayer=layer
                         self.gviz.hilight=[]
-						
+
                         threading.Thread(target=wx.CallAfter,args=(self.gviz.setlayer,layer)).start()
                 except:
                     pass
@@ -322,31 +399,6 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         except:
             print _("You must enter a temperature.")
 
-    def end_macro(self):
-        pronsole.pronsole.end_macro(self)
-        self.update_macros_menu()
-
-    def delete_macro(self,macro_name):
-        pronsole.pronsole.delete_macro(self,macro_name)
-        self.update_macros_menu()
-
-    def start_macro(self,macro_name,old_macro_definition=""):
-        if not self.processing_rc:
-            def cb(definition):
-                if len(definition.strip())==0:
-                    if old_macro_definition!="":
-                        dialog = wx.MessageDialog(self,_("Do you want to erase the macro?"),style=wx.YES_NO|wx.YES_DEFAULT|wx.ICON_QUESTION)
-                        if dialog.ShowModal()==wx.ID_YES:
-                            self.delete_macro(macro_name)
-                            return
-                    print _("Cancelled.")
-                    return
-                self.cur_macro_name = macro_name
-                self.cur_macro_def = definition
-                self.end_macro()
-            macroed(macro_name,old_macro_definition,cb)
-        else:
-            pronsole.pronsole.start_macro(self,macro_name,old_macro_definition)
 
     def catchprint(self,l):
         if self.capture_skip_newline and len(l) and not len(l.strip("\n\r")):
@@ -385,7 +437,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         # File menu
         m = wx.Menu()
         self.Bind(wx.EVT_MENU, self.loadfile2, m.Append(-1,_("&Open File..."),_(" Opens file")))
-        self.Bind(wx.EVT_MENU, self.do_editgcode, m.Append(-1,_("&Edit Gcode..."),_(" Edit open file")))
+        #self.Bind(wx.EVT_MENU, self.do_editgcode, m.Append(-1,_("&Edit Gcode..."),_(" Edit open file")))
         self.Bind(wx.EVT_MENU, self.clearOutput, m.Append(-1,_("Clear console"),_(" Clear output console")))
         self.Bind(wx.EVT_MENU, self.rescanports, m.Append(-1,_("Refresh Ports"),_(" Rescan Ports")))
         #self.Bind(wx.EVT_MENU, self.project, m.Append(-1,_("Projector"),_(" Project slices")))
@@ -397,14 +449,58 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         self.macros_menu = wx.Menu()
         #m.AppendSubMenu(self.macros_menu, _("&Macros"))
         #self.Bind(wx.EVT_MENU, self.new_macro, self.macros_menu.Append(-1, _("<&New...>")))
-        self.Bind(wx.EVT_MENU, lambda *e:options(self), m.Append(-1,_("&Options"),_(" Options dialog")))
-        
+        self.Bind(wx.EVT_MENU, lambda *e:options(self), m.Append(-1,_("&Coordia Options"),_(" Options dialog")))
+
         self.monitormenubox = m.Append(-1,_("Monitor Printer"),_(" Monitor Printer Temperature"), wx.ITEM_CHECK)
         self.Bind(wx.EVT_MENU, self.setmonitor,self.monitormenubox)
         m.Check(self.monitormenubox.GetId(), True)
         
+        pluginModule = skeinforge_profile.getCraftTypePluginModule()
+        profilePluginSettings = settings.getReadRepository(pluginModule.getNewRepository())
         
-        self.Bind(wx.EVT_MENU, lambda x:threading.Thread(target=lambda :self.do_skein("set")).start(), m.Append(-1,_("Slicing Settings"),_(" Adjust slicing settings")))
+        
+        
+        self.profileNames = []
+        self.profileIDs = []
+        self.profileMenu = wx.Menu()
+        #openMenuItem = profileMenu.Append(wx.NewId(), _("Open"),_("blahz"))
+ 
+        #exitMenuItem = profileMenu.Append(wx.NewId(), _("Exit"),_("Exit the application"))
+                                       
+        for profileName in profilePluginSettings.profileList.value:
+            #print profileName + " why"
+            profileMenuItem = self.profileMenu.Append(1000+len(self.profileNames), _(profileName),_("Select the " + profileName + " slicing profile"),wx.ITEM_RADIO)
+            def g(x):
+                self.Bind(wx.EVT_MENU, lambda event: self.updateCurrentProfile(x),profileMenuItem)
+            g(profileName)
+            self.profileIDs.append(1000+len(self.profileNames))
+            self.profileNames.append(profileName)
+        
+        self.refreshProfileSelection()
+        
+        self.machineMenu = wx.Menu()
+        
+        self.monitormenubox = self.machineMenu.Append(-1,_("Ditto"),_(" Select Ditto Machine"), wx.ITEM_CHECK)
+        self.Bind(wx.EVT_MENU, self.selectMachine1,self.monitormenubox)
+
+        self.monitormenubox = self.machineMenu.Append(-1,_("Ditto+"),_(" Select Ditto+ Machine"), wx.ITEM_CHECK)
+        self.Bind(wx.EVT_MENU, self.selectMachine2,self.monitormenubox)
+        
+        #self.machineMenu.Check(self.monitormenubox.GetId(), True)
+        self.monitormenubox = self.machineMenu.Append(-1,_("Litto"),_(" Select Litto Machine"), wx.ITEM_CHECK)
+        self.Bind(wx.EVT_MENU, self.selectMachine3,self.monitormenubox)
+        
+        
+        #self.savebtn.Bind(wx.EVT_BUTTON,lambda event: self.skeintest(event, category, type), self.savebtn)
+        ##m.AppendMenu(wx.NewId(), "Select Slice Profile", self.profileMenu)
+        
+        #m.AppendMenu(wx.NewId(), "Select Machine", self.machineMenu)
+        
+        self.skeintestmenu = m.Append(-1,_("Slicing Settings"),_(" Adjust Slicing Settings"))
+        self.Bind(wx.EVT_MENU, self.OnAbout2,self.skeintestmenu)
+        #m.Check(self.skeintestmenu.GetId(), True)
+
+        self.Bind(wx.EVT_MENU, lambda x:threading.Thread(target=lambda :self.do_skein("set")).start(), m.Append(-1,_("Advanced Slicing Settings"),_(" Adjust Slicing Settings")))
         try:
             from SkeinforgeQuickEditDialog import SkeinforgeQuickEditDialog
             #self.Bind(wx.EVT_MENU, lambda *e:SkeinforgeQuickEditDialog(self), m.Append(-1,_("SFACT Quick Settings"),_(" Quickly adjust SFACT settings for active profile")))
@@ -414,8 +510,77 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         self.menustrip.Append(m,_("&Settings"))
         self.update_macros_menu()
         self.SetMenuBar(self.menustrip)
+        
+        
+        m = wx.Menu()
+        self.aboutmenu = m.Append(-1,_("About Coordia"),_(" About Coordia"))
+        
+        self.Bind(wx.EVT_MENU, self.OnAbout,self.aboutmenu)
 
+        self.menustrip.Append(m,_("&About"))
+        self.update_macros_menu()
+        self.SetMenuBar(self.menustrip)
 
+        m = wx.Menu()
+        self.aboutmenu = m.Append(-1,_("Upload firmware to machine"),_(" Upload Firmware (.hex format)"))
+        #self.Bind(wx.EVT_MENU, self.disconnect,self.aboutmenu)
+        self.Bind(wx.EVT_MENU, self.OnCustomFirmware,self.aboutmenu)
+
+        self.menustrip.Append(m,_("&Firmware"))
+        self.update_macros_menu()
+        self.SetMenuBar(self.menustrip)
+
+        
+    def OnCustomFirmware(self, e):
+	#if profile.getPreference('machine_type') == 'ultimaker':
+	#	wx.MessageBox('Warning: Installing a custom firmware does not garantee that you machine will function correctly, and could damage your machine.', 'Firmware update', wx.OK | wx.ICON_EXCLAMATION)
+        self.disconnect(e)
+        dlg=wx.FileDialog(self, "Open firmware to upload", os.path.split('a')[0], style=wx.FD_OPEN|wx.FD_FILE_MUST_EXIST)
+        dlg.SetWildcard("HEX file (*.hex)|*.hex;*.HEX")
+        if dlg.ShowModal() == wx.ID_OK:
+            filename = dlg.GetPath()
+            if not(os.path.exists(filename)):
+                return
+		#For some reason my Ubuntu 10.10 crashes here.
+            firmwareInstall.InstallFirmware(filename)
+            
+    def refreshProfileSelection(self):
+        csv.register_dialect('tab', delimiter='\t')
+        row_reader = csv.reader(open(archive.getProfilesPath('extrusion.csv'), "rb"), 'tab')
+        for row in row_reader:
+            if row[0] == 'Profile Selection::':
+                for i in range(0,len(self.profileNames)):
+                    if row[1] == self.profileNames[i]:
+                        self.profileMenu.Check(self.profileIDs[i], True)
+                        print self.profileNames[i] + ' slicing profile selected'
+                        
+    def updateCurrentProfile(self, profile):
+        print profile + ' slicing profile selected'
+        self.skeintest2(profile)
+        
+    def selectMachine1(self, machine):
+        print "DITOOOOOO"
+        
+    def selectMachine2(self, machine):
+        print "DITOOOOOO++++"
+        
+    def selectMachine3(self, machine):
+        print "LITOOOOOO"
+        
+    def skeintest2(e,profileName):
+        profilepath = archive.getProfilesPath('extrusion.csv')
+        testcsv.makeHello("Profile Selection::",profileName,profilepath)
+        testcsv.destroyHello(profilepath)
+        
+    def OnAbout(self, event):
+        wx.MessageBox('Coordia version '+ versionString +' by Tinkerine Studio\nFor more information visit www.tinkerines.com', 'About Coordia', 
+            wx.OK | wx.ICON_INFORMATION)
+        #AboutFrame2().Show()
+
+    def OnAbout2(self, event):
+        self.sliceWindow = AboutFrame(self)
+        self.sliceWindow.Show()
+        
     def doneediting(self,gcode):
         f=open(self.filename,"w")
         f.write("\n".join(gcode))
@@ -485,6 +650,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         print "Rescanning Ports..."
         scan=self.scanserial()
         portslist=list(scan)
+        
         if self.settings.port != "" and self.settings.port not in portslist:
             portslist += [self.settings.port]
             self.serialport.Clear()
@@ -497,17 +663,14 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         except:
             pass
 
-
     def popwindow(self):
-
-        
         # this list will contain all controls that should be only enabled
         # when we're connected to a printer
         self.printerControls = []
         #sizer layout: topsizer is a column sizer containing two sections
         #upper section contains the mini view buttons
         #lower section contains the rest of the window - manual controls, console, visualizations
-		
+
         #TOP ROW:
         uts=self.uppertopsizer=wx.BoxSizer(wx.VERTICAL)
 
@@ -517,27 +680,27 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         #left pane
         lls=self.lowerlsizer=wx.GridBagSizer() #justin: everything is in lls now!
         leftbuttonpanel=wx.BoxSizer(wx.VERTICAL) #justin: please rename leftbuttonpanel!
-	
+
         lls.Add(leftbuttonpanel,pos=(0,0),span=(1,1))
 
         self.serialport = wx.ComboBox(self.panel, -1, #justin: com port box
                 choices=self.scanserial(),
                 style=wx.CB_DROPDOWN,
 				size = (62,-1))
-                
 
-        
+
+
         self.rescanports()
         leftbuttonpanel.Add(self.serialport,flag=wx.ALIGN_CENTER_VERTICAL|wx.BOTTOM|wx.TOP|wx.RIGHT|wx.LEFT, border=8)
-		
-		
+
+
         self.connectbtn=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/connect_3.png'),style=wx.NO_BORDER)
         self.connectbtn.SetToolTipString(_("Connect to the printer"))
         self.connectbtn.Bind(wx.EVT_BUTTON,self.connect)
         self.connectbtn.SetBackgroundColour(wx.Colour(73,73,75))
 
         leftbuttonpanel.Add(self.connectbtn,flag=wx.ALIGN_CENTER_HORIZONTAL|wx.BOTTOM|wx.RIGHT|wx.LEFT, border=5)
-		
+
         self.loadbtn=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/slice_4.png'),style=wx.NO_BORDER)
         self.loadbtn.SetToolTipString(_("Slice a .stl or .obj file into .gcode"))
 
@@ -551,7 +714,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         self.loadbtn2.Bind(wx.EVT_BUTTON,self.loadfile2)
         self.loadbtn2.SetBackgroundColour(wx.Colour(73,73,75))
         leftbuttonpanel.Add(self.loadbtn2,flag=wx.ALIGN_CENTER_HORIZONTAL|wx.BOTTOM|wx.RIGHT|wx.LEFT, border=5)
-        
+
         self.printbtn=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/print_3.png'),style=wx.NO_BORDER)
         self.printbtn.SetBitmapDisabled(wx.Bitmap('images/print_1.png'))
         self.printbtn.SetToolTipString(_("Start Print"))
@@ -567,32 +730,32 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         self.stopbtn.Disable()
         leftbuttonpanel.Add(self.stopbtn,flag=wx.ALIGN_CENTER_HORIZONTAL|wx.BOTTOM|wx.RIGHT|wx.LEFT, border=5)
 
-		
+
         controls=wx.BoxSizer(wx.VERTICAL) #justin: top right stuff
-	
+
         xyzbuttons=wx.BoxSizer(wx.HORIZONTAL)
-        
+
         self.xyb = XYZButtons(self.panel, self.moveXYZ)
         xyzbuttons.Add(self.xyb,flag=wx.BOTTOM,border=0) #justin: xy+z buttons
 
         controls.Add(xyzbuttons,flag=wx.ALL,border=8)
-	
-	
-	
+
+
+
         extruderbuttons=wx.BoxSizer(wx.HORIZONTAL) #justin: rename this too!
 
         self.asdf=wx.StaticText(self.panel,-1, "Move Filament(mm):")
         font2 = wx.Font(8.5, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
         self.asdf.SetFont(font2)
         self.asdf.SetForegroundColour((255,255,255)) # set text color
-        
+
         extruderbuttons.Add(self.asdf,flag=wx.ALIGN_CENTER | wx.RIGHT, border=3)
-        
+
         self.edist=wx.SpinCtrl(self.panel,-1,"5",min=0,max=1000,size=(50,-1)) #justin: extrude field
         self.edist.SetBackgroundColour((73,73,75))
         self.edist.SetForegroundColour("black")
         extruderbuttons.Add(self.edist,flag=wx.ALIGN_CENTER | wx.RIGHT, border=5)
-        
+
         self.extrudebtn=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/extrude_2.png'),style=wx.NO_BORDER)
         self.extrudebtn.Bind(wx.EVT_BUTTON,self.do_extrude)
         self.extrudebtn.SetBitmapDisabled(wx.Bitmap('images/extrude_1.png'))
@@ -600,7 +763,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
 
         self.printerControls.append(self.extrudebtn)
         extruderbuttons.Add(self.extrudebtn,flag=wx.ALIGN_CENTER | wx.RIGHT, border=6)
-		
+
         self.retractbtn=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/retract_2.png'),style=wx.NO_BORDER)
         self.retractbtn.Bind(wx.EVT_BUTTON,self.do_reverse)
         self.retractbtn.SetBitmapDisabled(wx.Bitmap('images/retract_1.png'))
@@ -609,20 +772,20 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         self.printerControls.append(self.retractbtn)
         extruderbuttons.Add(self.retractbtn,flag=wx.ALIGN_CENTER | wx.RIGHT, border=5)
 
-		
+
         controls.Add(extruderbuttons,flag=wx.ALIGN_RIGHT | wx.RIGHT | wx.BOTTOM, border=5)
-	
+
         lls.Add(controls, pos=(0,6), span=(1,2))
-		
+
         lrs=self.lowerrsizer=wx.BoxSizer(wx.VERTICAL)
         self.logbox=wx.TextCtrl(self.panel,style = wx.TE_MULTILINE,size=(314,120)) #justin: output window
         self.logbox.SetEditable(0)
         self.logbox.SetBackgroundColour(wx.Colour(120,120,120))
-	
+
         self.commandbox=wx.TextCtrl(self.panel,style = wx.TE_PROCESS_ENTER)
         self.commandbox.Bind(wx.EVT_TEXT_ENTER,self.sendline)
-        
-        
+
+
         self.sendbtn=wx.Button(self.panel,-1,_("Send"))
         self.sendbtn.Bind(wx.EVT_BUTTON,self.sendline)
 
@@ -632,7 +795,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         lbrs.Add(self.commandbox,1)
         lbrs.Add(self.sendbtn)
         lls.Add(lbrs, pos=(5,6), span=(1,3),flag=wx.EXPAND |wx.ALIGN_RIGHT | wx.RIGHT, border=5)
-	
+
         for i in self.cpbuttons:
             btn=wx.Button(self.panel,-1,i[0])#)
             btn.SetBackgroundColour(i[3])
@@ -642,19 +805,22 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
             self.btndict[i[1]]=btn
             self.printerControls.append(btn)
             lls.Add(btn,pos=i[2],span=i[4])
+            
+        NewTemperatureStuff=wx.GridBagSizer()
 
-        temperaturestuff=wx.BoxSizer(wx.VERTICAL)		
-	
+        temperaturestuff=wx.BoxSizer(wx.VERTICAL)
+
         toprow=wx.BoxSizer(wx.HORIZONTAL)
-	
-		
+
+
         bottomrow=wx.BoxSizer(wx.HORIZONTAL)
-        
+
 
         bitmap = wx.Bitmap("images/hotend_1.png")
         self.hotendlabel = wx.StaticBitmap(self, -1, bitmap)
-
-        toprow.Add(self.hotendlabel,flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.RIGHT, border=5)
+        
+        NewTemperatureStuff.Add(self.hotendlabel, pos=(0,0), span=(1,1),flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.RIGHT, border=5)
+        ##toprow.Add(self.hotendlabel,flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.RIGHT, border=5)
         htemp_choices=[self.temps[i]+" ("+i+")" for i in sorted(self.temps.keys(),key=lambda x:self.temps[x])]
 
         if self.settings.last_temperature not in map(float,self.temps.values()):
@@ -662,28 +828,41 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         self.htemp=wx.ComboBox(self.panel, -1,
                 choices=htemp_choices,style=wx.CB_DROPDOWN, size=(80,-1))
         self.htemp.Bind(wx.EVT_COMBOBOX,self.htemp_change)
-        toprow.Add(self.htemp)
-		
+        NewTemperatureStuff.Add(self.htemp,pos=(0,1), span=(1,1))
+        ##toprow.Add(self.htemp)
+
         self.setbtn1=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/set_2.png'),style=wx.NO_BORDER)
         self.setbtn1.Bind(wx.EVT_BUTTON,self.do_settemp) #justin: make sure this works eh?
         self.setbtn1.SetToolTipString(_("Set Hotend Temperature"))
         self.setbtn1.SetBitmapDisabled(wx.Bitmap('images/set_1.png'))
-        
+
         self.printerControls.append(self.setbtn1)
-        
-        toprow.Add(self.setbtn1,flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_LEFT|wx.LEFT,border=5)
-        
+
+        NewTemperatureStuff.Add(self.setbtn1,pos=(0,2), span=(1,1),flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_LEFT|wx.LEFT,border=5)
+        ##toprow.Add(self.setbtn1,flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_LEFT|wx.LEFT,border=5)
+
         self.setoffbtn=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/off_2.png'),style=wx.NO_BORDER)
         self.setoffbtn.Bind(wx.EVT_BUTTON,lambda e:self.do_settemp("off"))
         self.setoffbtn.SetToolTipString(_("Set Hotend Temperature"))
         self.setoffbtn.SetBitmapDisabled(wx.Bitmap('images/off_1.png'))
-        self.printerControls.append(self.setoffbtn)
-        toprow.Add(self.setoffbtn,flag=wx.ALIGN_RIGHT | wx.LEFT, border=0)
         
+        self.yagvbtn=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/3dview_5.png'),style=wx.NO_BORDER)
+        self.yagvbtn.Bind(wx.EVT_BUTTON,self.doYAGV)
+        self.yagvbtn.SetToolTipString(_("3d gcode viewer"))
+        self.yagvbtn.SetBitmapDisabled(wx.Bitmap('images/3dview_6.png'))
+        self.yagvbtn.Disable()
+        self.yagvbtn.SetBackgroundColour((73,73,73))
+        self.printerControls.append(self.setoffbtn)
+        #self.printerControls.append(self.yagvbtn)
+        NewTemperatureStuff.Add(self.setoffbtn,pos=(0,3), span=(1,1),flag=wx.ALIGN_RIGHT | wx.LEFT, border=0)
+        ##toprow.Add(self.setoffbtn,flag=wx.ALIGN_RIGHT | wx.LEFT, border=0)
+        
+
         bitmap = wx.Bitmap("images/bed_1.png")
         bedlabel = wx.StaticBitmap(self, -1, bitmap)
-        
-        bottomrow.Add(bedlabel,flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.RIGHT, border=5)
+
+        NewTemperatureStuff.Add(bedlabel,pos=(1,0), span=(1,1),flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.RIGHT, border=5)
+        ##bottomrow.Add(bedlabel,flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.RIGHT, border=5)
         btemp_choices=[self.bedtemps[i]+" ("+i+")" for i in sorted(self.bedtemps.keys(),key=lambda x:self.temps[x])]
 
         if self.settings.last_bed_temperature not in map(float,self.bedtemps.values()):
@@ -691,46 +870,56 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         self.btemp=wx.ComboBox(self.panel, -1,
                 choices=btemp_choices,style=wx.CB_DROPDOWN, size=(80,-1))
         self.btemp.Bind(wx.EVT_COMBOBOX,self.btemp_change)
-        bottomrow.Add(self.btemp, flag=wx.LEFT, border=0)
-        
+        NewTemperatureStuff.Add(self.btemp,pos=(1,1), span=(1,1), flag=wx.LEFT, border=0)
+        ##bottomrow.Add(self.btemp, flag=wx.LEFT, border=0)
+
         self.setbtn2=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/set_2.png'),style=wx.NO_BORDER)
         self.setbtn2.Bind(wx.EVT_BUTTON,lambda e:self.do_bedtemp("off"))
         self.setbtn2.SetToolTipString(_("Set Hotend Temperature"))
         self.setbtn2.SetBitmapDisabled(wx.Bitmap('images/set_1.png'))
         self.printerControls.append(self.setbtn2)
-        
-        bottomrow.Add(self.setbtn2,flag=wx.ALIGN_LEFT | wx.LEFT,border=5)
-        
+
+        NewTemperatureStuff.Add(self.setbtn2,pos=(1,2), span=(1,1),flag=wx.ALIGN_LEFT | wx.LEFT,border=5)
+        ##bottomrow.Add(self.setbtn2,flag=wx.ALIGN_LEFT | wx.LEFT,border=5)
+
         self.setoffbtn2=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/off_2.png'),style=wx.NO_BORDER)
         self.setoffbtn2.Bind(wx.EVT_BUTTON,lambda e:self.do_bedtemp("off"))
         self.setoffbtn2.SetToolTipString(_("Set Hotend Temperature"))
         self.setoffbtn2.SetBitmapDisabled(wx.Bitmap('images/off_1.png'))
         self.printerControls.append(self.setoffbtn2)
-        bottomrow.Add(self.setoffbtn2,flag=wx.ALIGN_LEFT | wx.LEFT, border=0)
-		
+        NewTemperatureStuff.Add(self.setoffbtn2,pos=(1,3), span=(1,1),flag=wx.ALIGN_LEFT | wx.LEFT, border=0)
+        ##bottomrow.Add(self.setoffbtn2,flag=wx.ALIGN_LEFT | wx.LEFT, border=0)
+
         self.btemp.SetValue(str(self.settings.last_bed_temperature))
         self.htemp.SetValue(str(self.settings.last_temperature))
-		
-        temperaturestuff.Add(toprow,flag=wx.ALIGN_LEFT | wx.LEFT, border = 0)
-        temperaturestuff.Add(bottomrow,flag=wx.ALIGN_LEFT | wx.TOP, border = 0)
-		
+
+        #temperaturestuff.Add(toprow,flag=wx.ALIGN_LEFT | wx.LEFT, border = 0)
+        #temperaturestuff.Add(bottomrow,flag=wx.ALIGN_LEFT | wx.TOP, border = 0)
+
         progressbarstuff=wx.BoxSizer(wx.VERTICAL)
-        
+
         filenamestuff=wx.BoxSizer(wx.HORIZONTAL)
         progresspercentstuff=wx.BoxSizer(wx.HORIZONTAL)
 
         self.filenametext=wx.StaticText(self.panel,-1,_(""))
         self.progresstext=wx.StaticText(self.panel,-1,_(""))
-        
+
         self.filenametext.SetForegroundColour((255,255,255)) # set text color
         self.progresstext.SetForegroundColour((255,255,255)) # set text color
+
+        #bitmap = wx.Bitmap("images/file.png")
+        #filelabel = wx.StaticBitmap(self, -1, bitmap)
         
-        bitmap = wx.Bitmap("images/file.png")
-        filelabel = wx.StaticBitmap(self, -1, bitmap)
+        self.filelabel2=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/file2.png'),style=wx.NO_BORDER)
+        self.filelabel2.Bind(wx.EVT_BUTTON,self.openFileLocation)
+        self.filelabel2.SetToolTipString(_("Open File Location"))
+        self.filelabel2.SetBitmapDisabled(wx.Bitmap('images/file.png'))
+        self.filelabel2.Disable()
         bitmap = wx.Bitmap("images/progress.png")
         progresslabel = wx.StaticBitmap(self, -1, bitmap)
-        
-        filenamestuff.Add(filelabel)
+
+        #filenamestuff.Add(filelabel)
+        filenamestuff.Add(self.filelabel2)
         filenamestuff.Add(self.filenametext)
         progresspercentstuff.Add(progresslabel)
         progresspercentstuff.Add(self.progresstext)
@@ -741,8 +930,9 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         progressbarstuff.Add(progresspercentstuff,flag=wx.ALIGN_LEFT|wx.BOTTOM,border=5)
         progressbarstuff.Add(self.progressbar1,flag=wx.ALIGN_LEFT| wx.BOTTOM|wx.RIGHT, border=5)
 
-	
-        lls.Add(temperaturestuff, pos=(1,0), span=(1,4),flag=wx.ALIGN_LEFT|wx.LEFT,border=10)
+        
+        lls.Add(NewTemperatureStuff, pos=(1,0), span=(1,4),flag=wx.ALIGN_LEFT|wx.LEFT,border=10)
+        ##lls.Add(temperaturestuff, pos=(1,0), span=(1,4),flag=wx.ALIGN_LEFT|wx.LEFT,border=10)
         lls.Add(progressbarstuff, pos=(3,0), span=(3,5),flag=wx.EXPAND|wx.LEFT,border=15)
 
         ## added for an error where only the bed would get (pla) or (abs).
@@ -763,7 +953,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
 
 
         font2 = wx.Font(8.5, wx.DEFAULT, wx.NORMAL, wx.BOLD)
-        
+
         self.tempdisp=wx.StaticText(self.panel,-1, "T: 0/0" + self.degree + " C")
         self.tempdisp.SetFont(font2)
         self.tempdisp.SetForegroundColour((255,255,255)) # set text color
@@ -771,11 +961,16 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         self.beddisp=wx.StaticText(self.panel,-1,"B: 0/0" + self.degree + " C")
         self.beddisp.SetFont(font2)
         self.beddisp.SetForegroundColour((255,255,255)) # set text color
-        
-        toprow.Add(self.tempdisp,flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.LEFT, border=3)
-        bottomrow.Add(self.beddisp,flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.LEFT, border=3)
-		
 
+        NewTemperatureStuff.Add(self.tempdisp, pos=(0,4), span=(1,1),flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.LEFT, border=3)
+        ##toprow.Add(self.tempdisp,flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.LEFT, border=3)
+        NewTemperatureStuff.Add(self.beddisp, pos=(1,4), span=(1,1),flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.LEFT, border=3)
+        ##bottomrow.Add(self.beddisp,flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.LEFT, border=3)
+        
+        NewTemperatureStuff.Add(self.yagvbtn, pos=(0,5), span=(2,1),flag=wx.ALIGN_RIGHT|wx.EXPAND | wx.LEFT, border=40)
+        ##toprow.Add(self.yagvbtn,flag=wx.ALIGN_RIGHT|wx.EXPAND | wx.LEFT, border=40)
+
+        #bottomrow.Add(self.profileSelection)
         self.gviz=gviz.gviz(self.panel,(147,148), #justin: gcode grid
             build_dimensions=self.build_dimensions_list,
             grid=(self.settings.preview_grid_step1,self.settings.preview_grid_step2),
@@ -794,7 +989,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         self.gwindow.Bind(wx.EVT_CLOSE,lambda x:self.gwindow.Hide())
         vcs=wx.BoxSizer(wx.VERTICAL)
         lls.Add(self.gviz,pos=(0,1),span=(1,5),flag=wx.EXPAND|wx.BOTTOM|wx.TOP|wx.RIGHT|wx.LEFT, border=5)
-		
+
         cs=self.centersizer=wx.GridBagSizer()
         #vcs.Add(cs,0,flag=wx.EXPAND)
 
@@ -827,9 +1022,18 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         #uts.Layout()
 
         #self.cbuttons_reload()
-        
 
 
+    def openFileLocation(self,e):
+        import shlex, subprocess
+        if self.filename:
+            #print "opening:" + self.filename
+            arg1 = r'explorer /select,'
+            arg2 = self.filename
+            
+            subprocess.Popen("%s %s" % (arg1, arg2))
+            
+#item = popupmenu.Append(-1,_("Remove custom button '%s'") % e.GetEventObject().GetLabelText())
     def plate(self,e):
         import plater
         print "plate function activated"
@@ -1036,8 +1240,8 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
             while n>0 and self.custombuttons[n-1] is None:
                 n -= 1
         bedit.Show()
-        
-        
+
+
     def cbutton_remove(self,e,button):
         n = button.custombutton
         self.custombuttons[n]=None
@@ -1217,7 +1421,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         if z != 0 and z != "h":
             self.onecmd('move Z %s' % z)
             print("Moving Z: " + z )
-            
+
         if x == "h":
             self.onecmd('home X')
         if y == "h":
@@ -1275,7 +1479,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
 
 
     def setmonitor(self,e):
-        
+
         if self.monitor == 1:
             self.monitor = 0
             print "Stopping Printer Temperature Monitor"
@@ -1297,15 +1501,25 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         wx.CallAfter(self.logbox.AppendText,">>>"+command+"\n")
         self.onecmd(str(command))
         self.commandbox.SetSelection(0,len(command))
-        
-    def skeintest(self,e):
-        value=self.testbox.GetValue()
-        testcsv.makeHello(value)
-        testcsv.destroyHello()
-        
+
+
     def clearOutput(self,e):
         self.logbox.Clear()
-
+        
+    def doYAGV(self,e):
+        centerX = int(float(checkEntry('Center X (mm):', 'multiply')))
+        centerY = int(float(checkEntry('Center Y (mm):', 'multiply')))
+        machineNum = 0
+        if centerX == 90 and centerY == 90:
+            machineNum = 1
+        if centerX == 105 and centerY == 90:
+            machineNum = 2
+        if centerX == 68 and centerY == 60:
+            machineNum = 3
+                
+        if self.filename:
+            yagv.main(self.filename, machineNum)
+            
     def statuschecker(self):#justin: I want to add a home thing here maybe?
         try:
             while(self.statuscheck):
@@ -1314,7 +1528,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
                     self.initialhome = self.initialhome+1
                 elif(self.initialhome ==1 and self.p.online):
                     print _("Printer is now online.")
-                    print _("Coordia Beta v0.1 by Tinkerine Studio")
+                    print _("Coordia Beta v"+versionString+" by Tinkerine Studio")
                     print _("*As this is a beta version, we are not responsible for any damage (although highly unlikely) this program may cause your machine*")
                     self.initialhome = self.initialhome+1
                     for i in self.printerControls:
@@ -1322,7 +1536,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
                     # Enable XYButtons and ZButtons
                     wx.CallAfter(self.xyb.enable)
                     #wx.CallAfter(self.zb.enable)
-                    
+
                     #wx.CallAfter(self.motorsoffbtn.Enable)
                     if self.filename:
                         wx.CallAfter(self.printbtn.Enable)
@@ -1343,13 +1557,19 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
                 except:
                     pass
                 #string+=(self.tempreport.replace("\r","").replace("T:",_("Hotend") + ":").replace("B:",_("Bed") + ":").replace("\n","").replace("ok ",""))+" "
-                #print(findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",2)) #find the 2nd space 
-                #print(countletters(self.tempreport.strip().replace("ok ",""), " ")) #find num of spaces 
+                #print(findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",2)) #find the 2nd space
+                #print(countletters(self.tempreport.strip().replace("ok ",""), " ")) #find num of spaces
                 #dummy_log=wx.LogNull()
-                if (countletters(self.tempreport.strip().replace("ok ",""), " ")) == 3: #find num of spaces 
+                #print countletters(self.tempreport.strip().replace("ok ",""), " ")
+                if countletters(self.tempreport.strip().replace("ok ",""), " ") == 3 or countletters(self.tempreport.strip().replace("ok ",""), " ") == 4: #find num of spaces
                     #print("cool")
-                    wx.CallAfter(self.tempdisp.SetLabel,self.tempreport.strip().replace("ok ","")[:findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",2)] + self.degree + " C") #justin: change to something i want later
-                    wx.CallAfter(self.beddisp.SetLabel,self.tempreport.strip().replace("ok ","")[findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",2)+1:] + self.degree + " C") #justin: change to something i want later
+                    if countletters(self.tempreport.strip().replace("ok ",""), " ") == 4: #new marlin with PID 
+                        wx.CallAfter(self.tempdisp.SetLabel,self.tempreport.strip().replace("ok ","")[:findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",2)] + self.degree + " C") #justin: change to something i want later
+                        wx.CallAfter(self.beddisp.SetLabel,self.tempreport.strip().replace("ok ","")[findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",2)+1:findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",3)] + self.degree + " C") #justin: change to something i want later
+                    elif countletters(self.tempreport.strip().replace("ok ",""), " ") == 3: #old marlin without PID
+                        wx.CallAfter(self.tempdisp.SetLabel,self.tempreport.strip().replace("ok ","")[:findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",2)] + self.degree + " C") #justin: change to something i want later
+                        wx.CallAfter(self.beddisp.SetLabel,self.tempreport.strip().replace("ok ","")[findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",2)+1:] + self.degree + " C") #justin: change to something i want later
+                        
                     targettemp = float(self.tempreport.strip().replace("ok ","")[findnthletterindex(self.tempreport.strip().replace("ok ",""), "/",1)+1:findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",2)])
                     #print targettemp
                     currenttemp = float(self.tempreport.strip().replace("ok ","")[findnthletterindex(self.tempreport.strip().replace("ok ",""), ":",1)+1:findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",1)]) #justin: change to something i want later
@@ -1365,9 +1585,9 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
                     else:
                         self.tempstatus = 1
                         self.hotendlabel.SetBitmap(wx.Bitmap('images/hotend_1.png'))
-                elif (countletters(self.tempreport.strip().replace("ok ",""), " ")) == 2: #find num of spaces 
+                elif (countletters(self.tempreport.strip().replace("ok ",""), " ")) == 2: #find num of spaces
                     self.hotendlabel.SetBitmap(wx.Bitmap('images/hotend_2.png'))
-                    
+
                 try:
                     #self.hottgauge.SetValue(float(filter(lambda x:x.startswith("T:"),self.tempreport.split())[0].split(":")[1]))
                     self.graph.SetExtruder0Temperature(float(filter(lambda x:x.startswith("T:"),self.tempreport.split())[0].split(":")[1]))
@@ -1417,7 +1637,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
                 #print(self.tempreport.strip().replace("ok ","")[findnthletterindex(self.tempreport.strip().replace("ok ",""), "/",1)+1:findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",2)]) #justin: change to something i want later
                 #print (countletters(self.tempreport.strip().replace("ok ",""), " "))
 
-                    #print self.tempstatus    
+                    #print self.tempstatus
             wx.CallAfter(self.status.SetStatusText,_("Not connected to printer."))
         except:
             pass #if window has been closed
@@ -1443,7 +1663,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
     def recvcb(self,l):
         if "T:" in l:
             self.tempreport=l
-            if (countletters(self.tempreport.strip().replace("ok ",""), " ")) == 2: #find num of spaces 
+            if (countletters(self.tempreport.strip().replace("ok ",""), " ")) == 2: #find num of spaces
                 #print("nice")
                 wx.CallAfter(self.tempdisp.SetLabel,self.tempreport.strip().replace("ok ","")[:findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",1)] + self.degree + " C") #justin: change to something i want later
                 wx.CallAfter(self.beddisp.SetLabel,self.tempreport.strip().replace("ok ","")[findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",1)+1:findnthletterindex(self.tempreport.strip().replace("ok ",""), " ",2)] + self.degree + " C") #justin: change to something i want later
@@ -1556,7 +1776,6 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
             self.f=[i.replace("\n","").replace("\r","") for i in of]
             of.close
             if self.p.online:
-                #print "ASDF"
                 wx.CallAfter(self.printbtn.Enable)
                 wx.CallAfter(self.stopbtn.Enable)
             wx.CallAfter(self.status.SetStatusText,_("Loaded ")+self.filename+_(", %d lines") % (len(self.f),))
@@ -1623,8 +1842,12 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
                     wx.CallAfter(self.printbtn.Enable)
                     wx.CallAfter(self.stopbtn.Enable)
                 threading.Thread(target=self.loadviz).start()
+        if self.filename:
+            filename = self.filename[int(findlastletterindex(self.filename,"\\")+1):] #MAC is "/" instead of "\\"
+            wx.CallAfter(self.filenametext.SetLabel," " + str(filename)) #justin: filename
+            #wx.CallAfter(self.filenametext.SetLabel," " + str(self.filename))
         dlg.Destroy()
-        
+
     def loadfile2(self,event,filename=None):
         if self.skeining and self.skeinp is not None:
             self.skeinp.terminate()
@@ -1667,8 +1890,12 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
                     wx.CallAfter(self.printbtn.Enable)
                     wx.CallAfter(self.stopbtn.Enable)
                 threading.Thread(target=self.loadviz).start()
+        if self.filename:
+            filename = self.filename[int(findlastletterindex(self.filename,"\\")+1):] #MAC is "/" instead of "\\"
+            wx.CallAfter(self.filenametext.SetLabel," " + str(filename)) #justin: filename
+            #wx.CallAfter(self.filenametext.SetLabel," " + str(self.filename))
         dlg.Destroy()
-        
+
     def loadviz(self):
         Xtot,Ytot,Ztot,Xmin,Xmax,Ymin,Ymax,Zmin,Zmax = pronsole.measurements(self.f)
         print pronsole.totalelength(self.f), _("mm of filament used in this print\n")
@@ -1687,27 +1914,31 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
         #print "generated 3d view in %f s"%(time.time()-t0)
         self.gviz.showall=1
         wx.CallAfter(self.gviz.Refresh)
-
+        ###
+        if self.filename:
+            self.yagvbtn.Enable()
+            self.filelabel2.Enable()
+        #    wx.CallAfter(yagv.main(self.filename))
     def motorsoff(self,event):
         self.p.send_now("M84")
         print("Turning Motors Off")
-		
-    def stopprint(self,event): 
+
+    def stopprint(self,event):
         self.p.send_now("M0")
         print("Stopped Print")
-		
+
     def homexaxis(self,event):
         self.onecmd('home X')
-        
-    def homeyaxis(self,event): 
+
+    def homeyaxis(self,event):
         self.onecmd('home Y')
-		
+
     def homezaxis(self,event):
         self.onecmd('home Z')
-		
+
     def homeallaxis(self,event):
         self.onecmd('home')
-		
+
     def printfile(self,event):
         self.extra_print_time=0
         if self.paused:
@@ -1768,6 +1999,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
             self.p.send_now("M28 "+str(dlg.GetValue()))
             self.recvlisteners+=[self.uploadtrigger]
         pass
+
 
     def pause(self,event):
         print _("Pausing...")
@@ -1832,7 +2064,7 @@ class PronterWindow(wx.Frame,pronsole.pronsole):
 
 
     def disconnect(self,event):
-        print _("Disconnected.")
+        print _("Printer disconnected.")
         self.p.disconnect()
         self.statuscheck=False
         self.connectbtn.SetBitmapLabel(wx.Bitmap('images/connect_3.png'))
@@ -1916,7 +2148,7 @@ class macroed(wx.Dialog):
         wx.Dialog.__init__(self,None,title=title % macro_name,style=wx.DEFAULT_DIALOG_STYLE|wx.RESIZE_BORDER)
         self.callback = callback
         self.panel=wx.Panel(self,-1)
-        
+
         titlesizer=wx.BoxSizer(wx.HORIZONTAL)
         title = wx.StaticText(self.panel,-1,title%macro_name)
         #title.SetFont(wx.Font(11,wx.NORMAL,wx.NORMAL,wx.BOLD))
@@ -1941,7 +2173,7 @@ class macroed(wx.Dialog):
         topsizer.Fit(self)
         self.Show()
         self.e.SetFocus()
-        
+
     def save(self,ev):
         self.Destroy()
         if not self.gcode:
@@ -2005,7 +2237,7 @@ class options(wx.Dialog):
                 if ctrls[k,1].GetValue() != str(v):
                     pronterface.set(k,str(ctrls[k,1].GetValue()))
         self.Destroy()
-        
+
 class ButtonEdit(wx.Dialog):
     """Custom button edit dialog"""
     def __init__(self,pronterface):
@@ -2034,7 +2266,7 @@ class ButtonEdit(wx.Dialog):
         topsizer.Add(self.CreateStdDialogButtonSizer(wx.OK|wx.CANCEL),0,wx.ALIGN_CENTER)
         self.SetSizer(topsizer)
         self.handler=None
-    
+
     def macrob_enabler(self,e):
         macro = self.command.GetValue()
         valid = False
@@ -2090,7 +2322,7 @@ class TempGauge(wx.Panel):
         rgb=lo.Red()+(hi.Red()-lo.Red())*vv,lo.Green()+(hi.Green()-lo.Green())*vv,lo.Blue()+(hi.Blue()-lo.Blue())*vv
         rgb=map(lambda x:x*0.8,rgb)
         return wx.Colour(*map(int,rgb))
-	
+
     def paint(self,ev):
         x0,y0,x1,y1,xE,yE = 1,1,self.ypt+1,1,self.width+1-2,20
         dc=wx.PaintDC(self)
@@ -2102,10 +2334,10 @@ class TempGauge(wx.Panel):
         gauge1,gauge2 = wx.Colour(255,255,210),(self.gaugeColour or wx.Colour(234,82,0))
         shadow1,shadow2 = wx.Colour(110,110,110),wx.Colour(255,255,255)
         gc = wx.GraphicsContext.Create(dc)
-        
+
         #bmp1 = wx.Bitmap("images/Background.png")
-        #dc.DrawBitmap(bmp1, 0, 0,1) 
-        
+        #dc.DrawBitmap(bmp1, 0, 0,1)
+
         # draw shadow first
         # corners
         gc.SetBrush(gc.CreateRadialGradientBrush(xE-7,9,xE-7,9,8,shadow1,shadow2))
@@ -2163,6 +2395,1011 @@ class TempGauge(wx.Panel):
         gc.DrawText(self.title,x0+18,y0+3)
         gc.DrawText(text,      x0+132,y0+3)
 
+class SkeinSetting(wx.BoxSizer):
+    def __init__(self, type,size=(200,200)):
+
+        self.panel=wx.Panel(self,-1,size=(111,600))
+        #self.panel=wx.Panel(self,-1,size=(500,600))
+
+
+    def addText(self):
+        print type
+
+
+class AboutFrame(wx.Frame):
+    title = "Edit Slicing Settings"
+    def __init__(self,parent):
+        wx.Frame.__init__(self, wx.GetApp().TopWindow, title=self.title, size = (680,560))
+        self.panel=wx.Panel(self,-1,size=(100,100))
+        self.panel.SetBackgroundColour(wx.Colour(73,73,75))
+        
+        #print skeinforge.getPluginFileNames()
+        
+        self.aList = []
+        self.anotherList = []
+        self.aDictionary = {'a':[],'b':[]}
+        
+        self.savebtn=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/save.png'),style=wx.NO_BORDER)
+        self.savebtn.SetBackgroundColour(wx.Colour(73,73,75))
+        self.savebtn.SetToolTip(wx.ToolTip("Save Profile"))
+        self.Bind(wx.EVT_BUTTON, self.printmsg, self.savebtn)
+        
+        self.defaultbtn=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/restore.png'),style=wx.NO_BORDER)
+        self.defaultbtn.SetBackgroundColour(wx.Colour(73,73,75))
+        self.defaultbtn.SetToolTip(wx.ToolTip("Restore Profile Defaults"))
+        self.Bind(wx.EVT_BUTTON, self.restoreDefault, self.defaultbtn)
+        
+        self.deletebtn=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/delete.png'),style=wx.NO_BORDER)
+        self.deletebtn.SetBackgroundColour(wx.Colour(73,73,75))
+        self.deletebtn.SetToolTip(wx.ToolTip("Delete Profile"))
+        self.Bind(wx.EVT_BUTTON, self.deleteProfile, self.deletebtn)
+        
+        self.addbtn=wx.BitmapButton(self.panel,-1,wx.Bitmap('images/new.png'),style=wx.NO_BORDER)
+        self.addbtn.SetBackgroundColour(wx.Colour(73,73,75))
+        self.addbtn.SetToolTip(wx.ToolTip("Create New Profile"))
+
+        self.Bind(wx.EVT_BUTTON, self.addProfile, self.addbtn)
+        
+        abc=self.lowerlsizer=wx.GridBagSizer() #justin: everything is in lls now!
+
+        labeltext = "Print Settings"
+        font2 = wx.Font(9.5, wx.DEFAULT, wx.NORMAL, wx.BOLD)
+
+        sb = wx.StaticBox(self.panel, label=labeltext)
+        sb.SetFont(font2)
+        sb.SetForegroundColour((255,255,255))
+        self.boxsizer = wx.StaticBoxSizer(sb, wx.VERTICAL)
+
+        abc.Add(self.boxsizer,pos=(1,0),span=(1,1),flag=wx.EXPAND|wx.BOTTOM|wx.LEFT|wx.TOP, border = 10)
+
+        labeltext2 = "Machine Settings"
+        sb = wx.StaticBox(self.panel, label=labeltext2)
+        sb.SetFont(font2)
+        sb.SetForegroundColour((255,255,255))
+        self.boxsizer2 = wx.StaticBoxSizer(sb, wx.VERTICAL)
+        abc.Add(self.boxsizer2,pos=(1,1),span=(1,1),flag=wx.EXPAND|wx.BOTTOM|wx.LEFT|wx.TOP, border = 10)
+        
+        labeltext3 = "Speed Settings"
+        sb = wx.StaticBox(self.panel, label=labeltext3)
+        sb.SetFont(font2)
+        sb.SetForegroundColour((255,255,255))
+        self.boxsizer3 = wx.StaticBoxSizer(sb, wx.VERTICAL)
+        abc.Add(self.boxsizer3,pos=(2,0),span=(1,1),flag=wx.EXPAND|wx.LEFT, border = 10)
+        
+        labeltext4 = "Advanced Settings"
+        sb = wx.StaticBox(self.panel, label=labeltext4)
+        sb.SetFont(font2)
+        sb.SetForegroundColour((255,255,255))
+        self.boxsizer4 = wx.StaticBoxSizer(sb, wx.VERTICAL)
+        abc.Add(self.boxsizer4,pos=(2,1),span=(1,1),flag=wx.EXPAND|wx.LEFT, border = 10)
+        
+        #abc.Add(self.savebtn,pos=(3,0),span=(1,1),flag=wx.ALIGN_LEFT|wx.LEFT|wx.TOP, border=10)
+        
+        centerX = int(float(checkEntry('Center X (mm):', 'multiply')))
+        centerY = int(float(checkEntry('Center Y (mm):', 'multiply')))
+        
+        pluginModule = skeinforge_profile.getCraftTypePluginModule()
+        profilePluginSettings = settings.getReadRepository(pluginModule.getNewRepository())
+        self.profileNames = []
+        
+        self.threeMilProfiles = ["3mm-High Resolution(experimental)", "3mm-Medium Resolution", "3mm-Low Resolution"]
+        self.oneSevenFiveMilProfiles = ["1.75mm-High Res", "1.75mm-Medium Res", "1.75mm-Low Res"]
+        self.defaultProfiles = self.threeMilProfiles + self.oneSevenFiveMilProfiles
+
+        for profileName in profilePluginSettings.profileList.value:
+            if centerX == 90 and centerY == 90 and profileName not in self.oneSevenFiveMilProfiles:
+                self.profileNames.append(profileName)
+            if centerX == 105 and centerY == 90 and profileName not in self.threeMilProfiles:
+                self.profileNames.append(profileName)
+            if centerX == 68 and centerY == 60 and profileName not in self.threeMilProfiles:
+                self.profileNames.append(profileName)
+       
+            
+        #self.refreshProfileNames(self)
+            
+        self.qq22=wx.StaticText(self.panel,-1, "Select Profile:",style=wx.ALIGN_RIGHT)
+        font2 = wx.Font(9.5, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        self.qq22.SetFont(font2)
+        self.qq22.SetForegroundColour((255,255,255)) # set text color
+        
+        self.cb = wx.ComboBox(self.panel, choices=self.profileNames, style=wx.CB_READONLY)
+        
+        self.cb.Bind(wx.EVT_COMBOBOX, self.OnSelect)
+        
+        self.machinetext=wx.StaticText(self.panel,-1, "Select Machine:",style=wx.ALIGN_RIGHT)
+        font2 = wx.Font(9.5, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        self.machinetext.SetFont(font2)
+        self.machinetext.SetForegroundColour((255,255,255)) # set text color
+        
+        machineNames = ["Ditto (3mm)","Ditto+ (1.75mm)","Litto (1.75mm)"]
+        self.machinebox = wx.ComboBox(self.panel, choices=machineNames, style=wx.CB_READONLY)
+        self.machinebox.Bind(wx.EVT_COMBOBOX, self.OnMachineSelect)
+
+        if centerX == 90 and centerY == 90: #ditto #todo:confirm these values
+            self.machinebox.SetStringSelection("Ditto (3mm)")
+        elif centerX == 105 and centerY == 90: #ditto+
+            self.machinebox.SetStringSelection("Ditto+ (1.75mm)")
+        elif centerX == 68 and centerY == 60: #litto
+            self.machinebox.SetStringSelection("Litto (1.75mm)")
+        #else:
+        #    radio4.SetValue(True) #other
+                    #radio1.Bind(wx.EVT_RADIOBUTTON,lambda event: self.saveRadioButton(event, "multiply", "Center X (mm):", "90"))
+
+        profilesizer=wx.GridBagSizer()
+        profilesizer.Add(self.machinetext,pos=(0,0),span=(1,1),flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT,border=7)
+        profilesizer.Add(self.machinebox,pos=(0,1),span=(1,1),flag=wx.ALIGN_CENTER_VERTICAL)
+        profilesizer.Add(self.qq22,pos=(1,0),span=(1,1),flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT,border=7)
+        profilesizer.Add(self.cb,pos=(1,1),span=(1,1),flag=wx.ALIGN_CENTER_VERTICAL)
+        
+       # self.qq22=wx.StaticText(self.panel,-1, "*Do not change settings except for 'Filament Diameter'\nunless you have a firm understanding of what they do*",style=wx.ALIGN_RIGHT)
+       # font2 = wx.Font(9.5, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+       # self.qq22.SetFont(font2)
+       # self.qq22.SetForegroundColour((255,255,255)) # set text color
+       # profilesizer.Add(self.qq22,flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT,border=10)
+       
+        profilesizer.Add(self.savebtn,pos=(0,2),span=(2,1),flag=wx.LEFT,border=10)
+        profilesizer.Add(self.defaultbtn,pos=(0,3),span=(2,1),flag=wx.LEFT,border=10)
+        profilesizer.Add(self.deletebtn,pos=(0,4),span=(2,1),flag=wx.LEFT,border=10)
+        profilesizer.Add(self.addbtn,pos=(0,5),span=(2,1),flag=wx.LEFT,border=10)
+
+        abc.Add(profilesizer,pos=(0,0),span=(1,2), flag=wx.ALIGN_LEFT|wx.LEFT|wx.TOP,border=10)
+        csv.register_dialect('tab', delimiter='\t')
+        row_reader = csv.reader(open(archive.getProfilesPath('extrusion.csv'), "rb"), 'tab')
+        for row in row_reader:
+            if row[0] == 'Profile Selection::':
+                #print "abc " + type + " " + row[0]
+                self.cb.SetStringSelection(row[1])
+                #row[1] = str(value)
+        
+        #1st entry is variable name in skeinforge (look them up in the csv's), 2nd is category name,
+        #3rd is the label that appears in the gui, 4th is left or right on the gui. 5th is tooltip.
+        self.addEntry('Layer Height (mm):', 'carve', 'Layer Height (mm)',1,
+        "How tall each layer of the print will be. A smaller number results in higher resolution.")
+        self.addEntry('Infill Solidity (ratio):', 'fill', 'Infill Solidity',1,
+        "How filled the inside of the print will be as a decimal.\n1 will produce a solid object, 0 will print a hollow object.")
+        self.addEntry('Extra Shells on Alternating Solid Layer (layers):', 'fill', 'Extra Shells/Perimeters (#)',1,
+        "How many extra shells/perimiters are added.")
+        self.addEntry('Top Surface Thickness (layers):', 'fill', 'Top Surface Thickness (#)',1,
+        "How many layers from the top of the print will be printed 100% solid")
+        self.addEntry('Bottom Surface Thickness (layers):', 'fill', 'Bottom Surface Thickness (#)',1,
+        "How many layers from the bottom of the print will be printed 100% solid")
+        self.addEntry('Brim Width:', 'skirt', 'Brim Width (mm)',1,
+        "Draws a perimiter around the object on the first layer that contacts the print.\nUsed to prevent the print from lifting. Input 0 to disable.")
+        self.addEntry('Skirt line count', 'skirt', 'Skirt Line Count(#)',1,
+        "Draws a perimiter around the object on the first layer but does not contact the print.\nUsed to purge the nozzle before starting the print.")
+        self.addEntry('Gap Width (mm):', 'skirt', 'Skirt Gap Width (mm)',1,
+        "How far away the skirt is from the print itself.")
+        self.addEntry('Add Raft, Elevate Nozzle, Orbit:', 'raft', 'Add Support Material',1,
+        "Generate Support Material for places that have extreme overhangs. ")
+        self.addEntry('Activate Jitter', 'jitter', 'Organic Clip',1,
+        "Attempts to hide start and end points of every perimeter. Works well with organic shapes.")
+        #self.addEntry('Support Minimum Angle (degrees):', 'raft', 'Support Minimum Angle (degrees)',1,
+        #"angal!")
+        
+        self.addEntry('Filament Diameter (mm):', 'dimension', 'Filament Diameter (mm)',2,
+        "Enter the Filament Diameter here. Use a digital caliper to measure your filament size.\nRange should be from about 2.8-3.1mm or 1.7-1.8mm")
+        self.addEntry('Object First Layer Infill Temperature (Celcius):', 'temperature', 'First Layer Temperature ('+unichr(176)+'C)',2,
+        "Temperature of print for the first layer. 200-215"+unichr(176)+"C is a good temperature.")
+        #self.addEntry('Object First Layer Perimeter Temperature (Celcius):', 'temperature', 'First Layer Perimeter',2)
+        self.addEntry('Base Temperature (Celcius):', 'temperature', 'Print Temperature ('+unichr(176)+'C)',2,
+        "Temperature for the rest of the print. 175-185"+unichr(176)+"C is a good temperature.")
+        self.addEntry('Minimum Layer Time (seconds):', 'cool', 'Minimum Layer Time (seconds)',2,
+        "Minimum amount of time one layer will take. The print will slow down to meet this time if needed.")        
+        self.addEntry('Turn Fan On Before Layer', 'cool', 'Turn Fan On At Layer',2,
+        "Turn on the fan at a certain layer. Turning the fan off for the first layer will help the print stick to the bed.")          
+        self.addEntry('Fan Speed', 'cool', 'Fan Speed',2,
+        "Fan Speed. 0 = off, 255 = fully on.")
+        
+        #self.addEntry('Center X (mm):', 'multiply', 'X Position Of Print',2,
+        #"Ditto: 90\nLitto: 67.5")
+        #self.addEntry('Center Y (mm):', 'multiply', 'Y Position Of Print',2,
+        #"Ditto: 90\nLitto: 60")
+
+        #radio1 = wx.RadioButton(self.panel, -1, "", style = wx.RB_GROUP )
+        #radio2 = wx.RadioButton(self.panel, -1, "" )
+        #radio3 = wx.RadioButton(self.panel, -1, "" )
+        #radio4 = wx.RadioButton(self.panel, -1, "" )
+        
+        #font2 = wx.Font(8.5, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        
+        #self.radiofont1=wx.StaticText(self.panel,-1, "Ditto")
+        #self.radiofont1.SetFont(font2)
+        #self.radiofont1.SetForegroundColour((255,255,255)) # set text color
+
+        #self.radiofont2=wx.StaticText(self.panel,-1, "Ditto+")
+        #self.radiofont2.SetFont(font2)
+        #self.radiofont2.SetForegroundColour((255,255,255)) # set text color
+        
+        #self.radiofont3=wx.StaticText(self.panel,-1, "Litto")
+        #self.radiofont3.SetFont(font2)
+        #self.radiofont3.SetForegroundColour((255,255,255)) # set text color
+        
+        #self.radiofont4=wx.StaticText(self.panel,-1, "Other")
+        #self.radiofont4.SetFont(font2)
+        #self.radiofont4.SetForegroundColour((255,255,255)) # set text color
+        
+        
+        #centerX = int(float(self.checkEntry('Center X (mm):', 'multiply')))
+        #centerY = int(float(self.checkEntry('Center Y (mm):', 'multiply')))
+        
+        #if centerX == 90 and centerY == 90: #ditto #todo:confirm these values
+        #    radio1.SetValue(True)
+        #elif centerX == 105 and centerY == 90: #ditto+
+        #    radio2.SetValue(True)
+        #elif centerX == 68 and centerY == 60: #litto
+        #    radio3.SetValue(True)
+        #else:
+        #    radio4.SetValue(True) #other
+            
+        #radio1.Bind(wx.EVT_RADIOBUTTON,lambda event: self.saveRadioButton(event, "multiply", "Center X (mm):", "90"))
+        #radio1.Bind(wx.EVT_RADIOBUTTON,lambda event: self.saveRadioButton(event, "multiply", "Center Y (mm):", "90"))
+        
+        #radio2.Bind(wx.EVT_RADIOBUTTON,lambda event: self.saveRadioButton(event, "multiply", "Center X (mm):", "105"))
+        #radio2.Bind(wx.EVT_RADIOBUTTON,lambda event: self.saveRadioButton(event, "multiply", "Center Y (mm):", "90"))
+        
+        #radio3.Bind(wx.EVT_RADIOBUTTON,lambda event: self.saveRadioButton(event, "multiply", "Center X (mm):", "68"))
+        #radio3.Bind(wx.EVT_RADIOBUTTON,lambda event: self.saveRadioButton(event, "multiply", "Center Y (mm):", "60"))
+
+        #radio4.Bind(wx.EVT_RADIOBUTTON,lambda event: self.saveRadioButton(event, "multiply", "Center X (mm):", "70")) #donno what to put for other
+        #radio4.Bind(wx.EVT_RADIOBUTTON,lambda event: self.saveRadioButton(event, "multiply", "Center Y (mm):", "70"))
+
+        
+        #radiosizer1=wx.BoxSizer(wx.HORIZONTAL)
+        #radiosizer1.Add(radio1,flag=wx.TOP,border=2)
+        #radiosizer1.Add(self.radiofont1,flag=wx.TOP|wx.LEFT|wx.RIGHT,border=2)
+        
+        #radiosizer2=wx.BoxSizer(wx.HORIZONTAL)
+        #radiosizer2.Add(radio2,flag=wx.TOP,border=2)
+        #radiosizer2.Add(self.radiofont2,flag=wx.TOP|wx.LEFT|wx.RIGHT,border=2)
+        
+        #radiosizer3=wx.BoxSizer(wx.HORIZONTAL)
+        #radiosizer3.Add(radio3,flag=wx.TOP,border=2)
+        #radiosizer3.Add(self.radiofont3,flag=wx.TOP|wx.LEFT|wx.RIGHT,border=2)
+        
+        #radiosizer4=wx.BoxSizer(wx.HORIZONTAL)
+        #radiosizer4.Add(radio4,flag=wx.TOP,border=2)
+        #radiosizer4.Add(self.radiofont4,flag=wx.TOP|wx.LEFT|wx.RIGHT,border=2)
+        
+        #font2 = wx.Font(11, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        
+        #testsizer.Add((0, 0), 1, wx.EXPAND)
+        #self.ehhhh2=wx.StaticText(self.panel,-1, "Select Machine")
+        #self.ehhhh2.SetFont(font2)
+        #self.ehhhh2.SetForegroundColour((255,255,255)) # set text color
+        
+        #self.boxsizer2.Add(self.ehhhh2, flag=wx.EXPAND|wx.LEFT|wx.BOTTOM|wx.ALIGN_CENTER_VERTICAL, border = 5)
+
+        
+        #self.boxsizer2.Add(radiosizer1, flag=wx.EXPAND|wx.LEFT|wx.BOTTOM|wx.ALIGN_CENTER_VERTICAL, border = 5)
+        #self.boxsizer2.Add(radiosizer2, flag=wx.EXPAND|wx.LEFT|wx.BOTTOM|wx.ALIGN_CENTER_VERTICAL, border = 5)
+        #self.boxsizer2.Add(radiosizer3, flag=wx.EXPAND|wx.LEFT|wx.BOTTOM|wx.ALIGN_CENTER_VERTICAL, border = 5)
+        #self.boxsizer2.Add(radiosizer4, flag=wx.EXPAND|wx.LEFT|wx.BOTTOM|wx.ALIGN_CENTER_VERTICAL, border = 5)
+        
+        #self.boxsizer2.Add(radio1, flag=wx.EXPAND|wx.LEFT|wx.BOTTOM|wx.ALIGN_CENTER_VERTICAL, border = 5)
+        #self.boxsizer2.Add(radio2, flag=wx.EXPAND|wx.LEFT|wx.BOTTOM|wx.ALIGN_CENTER_VERTICAL, border = 5)
+        #self.boxsizer2.Add(radio3, flag=wx.EXPAND|wx.LEFT|wx.BOTTOM|wx.ALIGN_CENTER_VERTICAL, border = 5)
+        #self.boxsizer2.Add(radio4, flag=wx.EXPAND|wx.LEFT|wx.BOTTOM|wx.ALIGN_CENTER_VERTICAL, border = 5)
+        
+        
+        
+        self.addEntry('Feed Rate (mm/s):', 'speed', 'Infill Print Speed (mm/s)',3,
+        "Print speed. 60-80mm/s is a good range.")
+        self.addEntry('Perimeter Feed Rate Multiplier (ratio):', 'speed', 'Perimeter Print Speed (mm/s)',3,
+        "Perimter Print Speed. 40-60mm/s is a good range")
+        #self.addEntry('Perimeter Flow Rate Multiplier (ratio):', 'speed', 'Perimeter Flow Rate Multiplier',2)
+        self.addEntry('Object First Layer Feed Rate Infill Multiplier (ratio):', 'speed', 'First Layer Print Speed (mm/s)',3,
+        "First Layer Print Speed. 30-60mm/s is a good range")
+        self.addEntry('Travel Feed Rate (mm/s):', 'speed', 'Travel Speed (mm/s)',3,
+        "Extruder Travel Speed while not extruding. 300-400mm/s is a good range")        
+        self.addEntry('Extruder Retraction Speed (mm/s):', 'dimension', 'Extruder Retraction Speed (mm/s)',3,
+        "Motor Retraction speed. \nDefault:10mm")
+        
+        
+        self.addEntry('Bridge Feed Rate Multiplier (ratio):', 'speed', 'Bridge Feed Rate Multiplier (ratio):',4,
+        "Print Speed while bridging. Default is 1.0.")
+        self.addEntry('Edge Width over Height (ratio):', 'carve', 'Width over Layer Height (ratio)',4,
+        "This multiplied by layer height should equal about 0.3-0.45.")
+        self.addEntry('Retraction Distance (millimeters):', 'dimension', 'Retraction Distance (millimeters)',4,
+        "How much distance retracts whenever there is a retract command.")
+        self.addEntry('Restart Extra Distance (millimeters):', 'dimension', 'Restart Extra Distance (millimeters)',4,
+        "How much extra distance will be added to every retract.")
+        
+        
+        
+        #self.addEntry('Activate Raft', 'raft', 'Activate Raft')
+        self.panel.SetSizer(abc)
+        #self.mainsizer.Layout()
+        self.doExceptions()
+        #todo: fix gui, save checkboxes, save when? button? on close?, rename variables to make sense, start/end gcode edit, on start create default folder
+        #todo: check output when you stop printer monitor
+        
+    def addEntry(self,type,category,label = "",placement = 1, tooltip = "awaiting tooltip"):
+        testsizer=wx.BoxSizer(wx.HORIZONTAL)
+
+        text = label + ": "
+        self.qq22=wx.StaticText(self.panel,-1, text,style=wx.ALIGN_RIGHT)
+        font2 = wx.Font(8.5, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        self.qq22.SetFont(font2)
+        self.qq22.SetForegroundColour((255,255,255)) # set text color
+
+        csv.register_dialect('tab', delimiter='\t') #maybe in the future change all this to checkEntry
+        filepath = category + ".csv"
+        in_file = os.path.join(archive.getProfilesPath(skeinforge_profile.getProfileDirectory()),filepath)
+        #print in_file
+        row_reader = csv.reader(open(in_file, "rb"), 'tab')
+        currentVal = "Default"
+        for row in row_reader:
+            if type == row[0]:
+                #print "abc " + type + " " + row[0]
+                currentVal = row[1] 
+                #row[1] = str(value) #maybe in the future change all this to checkEntry
+                
+        
+        if currentVal.lower() == "true" or currentVal.lower() == "false": #if the field is a checkbox
+            #print "must drink more mold"
+            self.testbox2 = wx.CheckBox(self.panel, -1, '', (225, 15))
+            self.testbox2.SetToolTip(wx.ToolTip(tooltip))
+            #self.testbox2.Bind(wx.EVT_CHECKBOX(self, lambda event: self.skeintest2(event, category), self.testbox2))
+            #self.testbox2.Bind(wx.EVT_CHECKBOX(self, lambda event, temp=category: self.skeintest2(event), self.testbox2))
+
+            if currentVal.lower() == "true":
+                self.testbox2.SetValue(True)
+            else:
+                self.testbox2.SetValue(False)
+
+            self.savebtn.Bind(wx.EVT_BUTTON,lambda event: self.skeintest(event, category, type), self.savebtn)
+            
+            self.testbox2.name = type
+
+            testsizer.Add(self.qq22,flag=wx.TOP|wx.LEFT,border=5)
+            testsizer.Add((0, 0), 1, wx.EXPAND)
+            testsizer.Add(self.testbox2,flag=wx.TOP|wx.BOTTOM,border=4)
+            
+            self.aList.append(self.testbox2)
+            self.anotherList.append([self.testbox2,category])
+            
+        else: #if the field is not a checkbox
+            self.testbox=wx.TextCtrl(self.panel,-1,currentVal,style = wx.TE_PROCESS_ENTER|wx.EXPAND)
+            self.testbox.SetToolTip(wx.ToolTip(tooltip))
+            self.testbox.Bind(wx.EVT_TEXT_ENTER,lambda event: self.skeintest(event, category, type), self.testbox)
+            #print self.testbox.GetValue()
+            value = self.testbox.GetValue()
+            self.testbox.name = type
+            self.savebtn.Bind(wx.EVT_BUTTON,lambda event: self.skeintest(event, category, type), self.savebtn)
+
+            testsizer.Add(self.qq22,flag=wx.TOP|wx.LEFT|wx.RIGHT,border=5)
+            testsizer.Add((0, 0), 1, wx.EXPAND)
+            testsizer.Add(self.testbox,flag=wx.TOP,border=5)
+
+            self.aList.append(self.testbox)
+            #self.aDictionary['a'].append(self.testbox)
+            #self.aDictionary['b'].append(category)
+            self.anotherList.append([self.testbox,category])
+            #print self.anotherList
+            
+            #for i in self.aDictionary:
+            #    print i[1]
+            #print self.aList[0].name
+            #for item in self.aList:
+            #    print item.GetValue()
+
+        #testsizer.Add(self.testbox2,flag=wx.TOP,border=5)
+
+        name = type.lower()
+
+        if placement == 1:
+            self.boxsizer.Add(testsizer, flag=wx.EXPAND|wx.RIGHT|wx.ALIGN_CENTER_VERTICAL, border = 10)
+        elif placement == 2:
+            self.boxsizer2.Add(testsizer, flag=wx.EXPAND|wx.RIGHT|wx.ALIGN_CENTER_VERTICAL, border = 10)
+        elif placement == 3:
+            self.boxsizer3.Add(testsizer, flag=wx.EXPAND|wx.RIGHT|wx.ALIGN_CENTER_VERTICAL, border = 10)
+        elif placement == 4:
+            self.boxsizer4.Add(testsizer, flag=wx.EXPAND|wx.RIGHT|wx.ALIGN_CENTER_VERTICAL, border = 10)
+        #else:
+        #    self.boxsizer2.Add(testsizer, flag=wx.EXPAND|wx.RIGHT|wx.ALIGN_CENTER_VERTICAL, border = 20)
+        #self.mainsizer.Add(testsizer,flag=wx.ALIGN_LEFT)
+        #self.mainsizer.Add(boxsizer, flag=wx.EXPAND|wx.BOTTOM|wx.LEFT, border = 10)
+
+    def doExceptions(self):
+        for item in self.aList:
+            #print item.name
+            if item.name == 'Perimeter Feed Rate Multiplier (ratio):' or item.name == 'Object First Layer Feed Rate Infill Multiplier (ratio):':
+                #print float(item.GetValue())
+                newVal = float(item.GetValue()) * float(self.getTextBoxValue('Feed Rate (mm/s):'))
+                item.SetValue(str(newVal))
+            
+            
+    def refreshAllEntries(self):
+        #print self.anotherList[0][0].name
+        for i in range(0,len(self.anotherList)):
+            #print self.anotherList[i][0].name + self.anotherList[i][1]
+            #self.anotherList[i][0].name is the name of the field
+            #self.anotherList[i][1] is the catagory of the field
+            csv.register_dialect('tab', delimiter='\t')
+            filepath = self.anotherList[i][1] + ".csv"
+            in_file = os.path.join(archive.getProfilesPath(skeinforge_profile.getProfileDirectory()),filepath)
+            #print in_file
+            row_reader = csv.reader(open(in_file, "rb"), 'tab')
+            for row in row_reader:
+                if self.anotherList[i][0].name == row[0]:
+                    #print row[0]
+                    #print row[1]
+                    if row[1] == 'True':
+                        self.anotherList[i][0].SetValue(True)
+                    elif row[1] == 'False':
+                        self.anotherList[i][0].SetValue(False)
+                    else:
+                        self.anotherList[i][0].SetValue(row[1])
+        self.doExceptions()
+        
+    def refreshProfileNames(self, event):
+        centerX = int(float(checkEntry('Center X (mm):', 'multiply')))
+        centerY = int(float(checkEntry('Center Y (mm):', 'multiply')))
+        
+        pluginModule = skeinforge_profile.getCraftTypePluginModule()
+        profilePluginSettings = settings.getReadRepository(pluginModule.getNewRepository())
+        self.profileNames = []
+        self.threeMilProfiles = ["3mm-High Resolution(experimental)", "3mm-Medium Resolution", "3mm-Low Resolution"]
+        self.oneSevenFiveMilProfiles = ["1.75mm-High Res", "1.75mm-Medium Res", "1.75mm-Low Res"]
+        self.defaultProfiles = self.threeMilProfiles + self.oneSevenFiveMilProfiles
+
+        for profileName in profilePluginSettings.profileList.value:
+            #if centerX == 90 and centerY == 90 and "1.75mm-High Res" not in profileName and "1.75mm-Medium Res" not in profileName and "1.75mm-Low Res" not in profileName:
+            if centerX == 90 and centerY == 90 and profileName not in self.oneSevenFiveMilProfiles:
+                self.profileNames.append(profileName)
+            #if centerX == 105 and centerY == 90 and "3mm-High Res" not in profileName and "3mm-Medium Res" not in profileName and "3mm-Low Res" not in profileName:
+            if centerX == 105 and centerY == 90 and profileName not in self.threeMilProfiles:
+                self.profileNames.append(profileName)
+            #if centerX == 68 and centerY == 60 and "3mm-High Res" not in profileName and "3mm-Medium Res" not in profileName and "3mm-Low Res" not in profileName:
+            if centerX == 68 and centerY == 60 and profileName not in self.threeMilProfiles:
+                self.profileNames.append(profileName)
+            #profileNames.append(profileName)
+        #print self.profileNames
+        self.cb.Clear()
+        for profileName in self.profileNames:
+            self.cb.Append(profileName)        
+        #self.GetParent().updateCurrentProfile( self.nameField.GetValue() )
+        csv.register_dialect('tab', delimiter='\t')
+        row_reader = csv.reader(open(archive.getProfilesPath('extrusion.csv'), "rb"), 'tab')
+        
+            
+        for row in row_reader:
+            if row[0] == 'Profile Selection::':
+                #print "abc " + type + " " + row[0]
+                self.cb.SetStringSelection(row[1])
+                #row[1] = str(value)
+
+    def ShowTitle(self, event):
+        if self.testbox.GetValue():
+            self.SetTitle('checkbox.py')
+        else: self.SetTitle('')
+
+    def skeintest(self,e,testarg,type): #save one field to the .csv
+        #value=e.GetEventObject().GetValue()
+        #print type
+        anotherpath = archive.getProfilesPath(skeinforge_profile.getProfileDirectory())
+        filepath = testarg + ".csv"
+        #print filepath
+        newpath = os.path.join(anotherpath, filepath)
+
+        for item in self.aList: #when saving these, they have to be converted back into a decimal to be fed into skeinforge
+            if item.name == type:
+                field = item.GetValue()
+                #print field
+                if type == 'Perimeter Feed Rate Multiplier (ratio):' or type == 'Object First Layer Feed Rate Infill Multiplier (ratio):':
+                    #print field
+                    field = float(field) / float(self.getTextBoxValue('Feed Rate (mm/s):'))
+                    #print field
+                #have to look for print speed here. maybe create function to get print speed(or any field in particular)
+        #testcsv.makeHello(e.GetEventObject().name,value,newpath)
+        testcsv.makeHello(type,field,newpath)
+        testcsv.destroyHello(newpath)
+        time.sleep(0.07)
+        e.Skip() #todo, create some sort of check instead of a 0.07 sleep.
+        
+        if type == 'Turn Fan On Before Layer':
+            testcsv.makeHello("Slow Down At Layer:",field,os.path.join(anotherpath,"speed.csv") )
+            testcsv.destroyHello(os.path.join(anotherpath,"speed.csv"))
+            time.sleep(0.07)
+            e.Skip() #todo, create some sort of check instead of a 0.07 sleep.
+        
+        
+    def saveRadioButton(self,e,testarg,type,value): #save one field to the .csv
+        #value=e.GetEventObject().GetValue()
+        #print field
+        anotherpath = archive.getProfilesPath(skeinforge_profile.getProfileDirectory())
+        filepath = testarg + ".csv"
+        #print filepath
+        newpath = os.path.join(anotherpath, filepath)
+        #for item in self.aList: #when saving these, they have to be converted back into a decimal to be fed into skeinforge
+        #    if item.name == type:
+        #        field = item.GetValue()
+
+        testcsv.makeHello(type,value,newpath)
+        testcsv.destroyHello(newpath)
+        time.sleep(0.07)
+        e.Skip() #todo, create some sort of check instead of a 0.07 sleep.
+        
+    def skeintest2(e,profileName):
+        #value=e.GetEventObject().GetValue()
+        #print field
+        profilepath = archive.getProfilesPath('extrusion.csv')
+        #print profilepath
+
+        #for item in self.aList:
+        #    if item.name == type:
+        #        field = item.GetValue()
+
+        testcsv.makeHello("Profile Selection::",profileName,profilepath)
+        #testcsv.makeHello(type,field,newpath)
+        testcsv.destroyHello(profilepath)
+        #time.sleep(0.05)
+        #e.Skip()
+
+    def OnSelect(self, e):
+        profileName = e.GetString()
+        #print i
+        #self.st.SetLabel(i)
+        self.skeintest2(profileName)
+        self.refreshAllEntries()
+        #PronterWindow.refreshProfileSelection(PronterWindow)
+        wx.GetApp().TopWindow.refreshProfileSelection()
+        if self.machinebox.GetValue() == "Ditto (3mm)":
+            self.saveRadioButton(e, "multiply", "Center X (mm):", "90")
+            self.saveRadioButton(e, "multiply", "Center Y (mm):", "90")
+            #print "Machine: Ditto (3mm) selected"
+            
+        if self.machinebox.GetValue() == "Ditto+ (1.75mm)":
+            self.saveRadioButton(e, "multiply", "Center X (mm):", "105")
+            self.saveRadioButton(e, "multiply", "Center Y (mm):", "90")            
+            #print "Machine: Ditto+ (1.75mm) selected"
+            
+        if self.machinebox.GetValue() == "Litto (1.75mm)":
+            self.saveRadioButton(e, "multiply", "Center X (mm):", "68")
+            self.saveRadioButton(e, "multiply", "Center Y (mm):", "60")
+            #print "Machine: Litto (1.75mm) selected"
+            
+    def OnMachineSelect(self, e):
+        machineName = e.GetString()
+                    
+        if machineName == "Ditto (3mm)":
+            self.GetParent().updateCurrentProfile( "3mm-Medium Resolution" )
+            self.cb.SetValue( "3mm-Medium Resolution" )
+            self.saveRadioButton(e, "multiply", "Center X (mm):", "90")
+            self.saveRadioButton(e, "multiply", "Center Y (mm):", "90")
+            print "Machine: Ditto (3mm) selected"
+            
+        if machineName == "Ditto+ (1.75mm)":
+            self.GetParent().updateCurrentProfile( "1.75mm-Medium Res" )
+            self.cb.SetValue( "1.75mm-Medium Res" )
+            self.saveRadioButton(e, "multiply", "Center X (mm):", "105")
+            self.saveRadioButton(e, "multiply", "Center Y (mm):", "90")            
+            print "Machine: Ditto+ (1.75mm) selected"
+            
+        if machineName == "Litto (1.75mm)":
+            self.GetParent().updateCurrentProfile( "1.75mm-Medium Res" )
+            self.cb.SetValue( "1.75mm-Medium Res" )
+            self.saveRadioButton(e, "multiply", "Center X (mm):", "68")
+            self.saveRadioButton(e, "multiply", "Center Y (mm):", "60")
+            print "Machine: Litto (1.75mm) selected"
+            
+        self.refreshProfileNames(self)
+        self.refreshAllEntries()
+        #if self.cb.GetValue() == "":
+        #    if machineName == "Ditto (3mm)":
+        #        self.GetParent().updateCurrentProfile( "3mm-Medium Resolution" )
+        #        self.cb.SetValue( "3mm-Medium Resolution" )
+        #    elif machineName == "Litto (1.75mm)" or  machineName == "Ditto+ (1.75mm)":
+        #        self.GetParent().updateCurrentProfile( "1.75mm-Medium Res" )
+        #        self.cb.SetValue( "1.75mm-Medium Res" )
+
+        #self.threeMilProfiles = ["3mm-High Resolution(experimental)", "3mm-Medium Resolution", "3mm-Low Resolution"]
+        #self.oneSevenFiveMilProfiles = ["1.75mm-High Res", "1.75mm-Medium Res", "1.75mm-Low Res"]
+        
+        #print i
+        #self.st.SetLabel(i)
+        #self.skeintest2(profileName)
+        #self.refreshAllEntries()
+        #PronterWindow.refreshProfileSelection(PronterWindow)
+        #wx.GetApp().TopWindow.refreshProfileSelection()
+        
+    def getTextBoxValue(self, type):
+        for item in self.aList:
+            if item.name == type:
+                return item.GetValue()
+        #return "couldn't find"
+        
+    def printmsg(self, event):
+        print "Slicing Settings Saved"
+        GenericMessage("Slicing Settings Saved","Slicing Settings Saved",220)
+        #SliceMessage()
+        
+    def restoreDefault(self, event):
+        defaultProfilePath = os.path.join(archive.getSkeinforgePath('profiles\extrusion'), wx.GetApp().TopWindow.getCurrentProfile())
+
+        if os.path.exists(defaultProfilePath):
+            RestoreDefaultPromt()
+        else:
+            #print "DOESN'T EXIST"
+            GenericMessage("Cannot Restore Defaults","You cannot restore the defaults of a custom profile",350)
+            
+    def deleteProfile(self, event):
+        DeletePromt()
+        
+    def addProfile(self, event):
+        AddProfilePromt()
+        
+class AddProfilePromt(wx.Frame):
+    title = "Add New Profile"
+    def __init__(self):
+
+        wx.Frame.__init__(self, wx.GetApp().TopWindow, title=self.title, size = (370,180))
+        self.panel = wx.Panel(self)
+
+        self.panel.SetBackgroundColour(wx.Colour(73,73,75))
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        hbox1 = wx.BoxSizer(wx.HORIZONTAL)
+        hbox2 = wx.BoxSizer(wx.HORIZONTAL)
+        gridbox = wx.GridBagSizer()
+        
+        text = "Add New Profile"
+        qq22=wx.StaticText(self.panel,-1, text)
+        font2 = wx.Font(9, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        qq22.SetFont(font2)
+        qq22.SetForegroundColour((255,255,255)) # set text color
+        
+        text = "Profile Name: "
+        profiletext=wx.StaticText(self.panel,-1, text)
+        font2 = wx.Font(9, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        profiletext.SetFont(font2)
+        profiletext.SetForegroundColour((255,255,255)) # set text color
+        
+        text = "Copy from Profile: "
+        profilecopytext=wx.StaticText(self.panel,-1, text)
+        font2 = wx.Font(9, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        profilecopytext.SetFont(font2)
+        profilecopytext.SetForegroundColour((255,255,255)) # set text color
+        
+        profileNames = []
+        pluginModule = skeinforge_profile.getCraftTypePluginModule()
+        profilePluginSettings = settings.getReadRepository(pluginModule.getNewRepository())
+        for profileName in profilePluginSettings.profileList.value:
+            profileNames.append(profileName)
+        self.profilecombobox = wx.ComboBox(self.panel, choices=profileNames, style=wx.CB_READONLY)
+        self.profilecombobox.SetValue( wx.GetApp().TopWindow.getCurrentProfile() )
+       
+        self.nameField=wx.TextCtrl(self.panel,-1,"My Custom Profile-#",size = (200,20),style = wx.TE_PROCESS_ENTER|wx.EXPAND)
+        self.nameField.SetToolTip(wx.ToolTip("New Profile Name"))
+        #print self.nameField.GetValue()
+        #nameFieldValue = self.nameField.GetValue()
+        
+        btn1 = wx.Button(self.panel, label='Ok', size=(70, 30))
+        btn1.SetForegroundColour(wx.Colour(73,73,75))
+        btn1.Bind(wx.EVT_BUTTON,self.doit)
+        
+        btn2 = wx.Button(self.panel, label='Cancel', size=(70, 30))
+        btn2.SetForegroundColour(wx.Colour(73,73,75))
+        btn2.Bind(wx.EVT_BUTTON,self.close)
+        
+        hbox1.Add(btn2, 1, wx.ALIGN_CENTER_HORIZONTAL|wx.RIGHT, border=10)
+        hbox1.Add(btn1, 1, wx.ALIGN_CENTER_HORIZONTAL|wx.LEFT, border=10)
+        
+        gridbox.Add(profiletext,pos=(0,0),span=(1,1))
+        gridbox.Add(self.nameField,pos=(0,1),span=(1,1))
+        
+        gridbox.Add(profilecopytext,pos=(1,0),span=(1,1))
+        gridbox.Add(self.profilecombobox,pos=(1,1),span=(1,1))
+        
+        vbox.Add(qq22, 1, wx.ALIGN_CENTER_HORIZONTAL|wx.TOP, border=10)
+        vbox.Add(gridbox, 1, wx.ALIGN_CENTER_HORIZONTAL)
+        vbox.Add(hbox1, 1, wx.ALIGN_CENTER_HORIZONTAL)
+        
+        self.panel.SetSizer(vbox)
+        self.Show()
+
+    def doit(self,event):
+        #print "test"
+        #skeinforge_profile.AddProfile.addSelection(skeinforge_profile.AddProfile())
+        #print archive.getProfilesPath('extrusion.csv')
+        #print archive.getProfilesPath()
+        #print skeinforge_profile.getProfileDirectory()
+        #print os.path.join( "skeinforge_application\profiles\extrusion\1.75mm-Medium Res",skeinforge_profile.getProfileDirectory() )
+        defaultProfilePath = os.path.join(archive.getSkeinforgePath('profiles\extrusion'), self.profilecombobox.GetValue())
+        #print defaultProfilePath
+        #print archive.getProfilesPath()
+        #settings.deleteDirectory(archive.getProfilesPath(),skeinforge_profile.getProfileDirectory())
+        #print os.listdir(defaultProfilePath)
+        
+        def copytree(src, dst, symlinks=False, ignore=None):
+            #print src
+            #print dst
+            if not os.path.exists(dst):
+                os.makedirs(dst)
+            else:
+                print "IT EXISTS"
+            for item in os.listdir(src):
+                s = os.path.join(src, item)
+                d = os.path.join(dst, item)
+                if os.path.isdir(s):
+                    shutil.copytree(s, d, symlinks, ignore)
+                else:
+                    shutil.copy2(s, d)
+                    
+        profileNames = []
+        pluginModule = skeinforge_profile.getCraftTypePluginModule()
+        profilePluginSettings = settings.getReadRepository(pluginModule.getNewRepository())
+        for profileName in profilePluginSettings.profileList.value:
+            profileNames.append(profileName)
+                    
+        if self.nameField.GetValue() in profileNames:
+            GenericMessage("Cannot Create Profile","Cannot create profile because\nit already exists",415)
+        elif self.nameField.GetValue() == "":
+            GenericMessage("Name Field Required","You much input a name into the field 'Profile Name:' ",415)
+        else :
+            copytree( os.path.join(archive.getProfilesPath('extrusion'), self.profilecombobox.GetValue()),  os.path.join(archive.getProfilesPath('extrusion'),self.nameField.GetValue() ) )
+            #print self.parent(self)
+            
+            self.GetParent().updateCurrentProfile( self.nameField.GetValue() )
+            self.GetParent().sliceWindow.refreshAllEntries()
+            self.GetParent().sliceWindow.cb.SetStringSelection(wx.GetApp().TopWindow.getCurrentProfile())
+            self.GetParent().sliceWindow.refreshProfileNames(event)
+            
+            GenericMessage("New Profile Created","Profile " + wx.GetApp().TopWindow.getCurrentProfile() + " created",415)
+            self.Close(True)
+        
+    def close(self,ev):
+        self.Close(True)
+        
+class DeletePromt(wx.Frame):
+    title = "Delete Profile"
+    def __init__(self):
+
+        wx.Frame.__init__(self, wx.GetApp().TopWindow, title=self.title, size = (315,130))
+        self.panel = wx.Panel(self)
+
+        self.panel.SetBackgroundColour(wx.Colour(73,73,75))
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        hbox = wx.BoxSizer(wx.HORIZONTAL)
+        text = "Are you sure you would like to delete the\n" + wx.GetApp().TopWindow.getCurrentProfile() + " profile?"
+        qq22=wx.StaticText(self.panel,-1, text)
+        font2 = wx.Font(9, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        qq22.SetFont(font2)
+        qq22.SetForegroundColour((255,255,255)) # set text color
+        
+        btn1 = wx.Button(self.panel, label='Ok', size=(70, 30))
+        btn1.SetForegroundColour(wx.Colour(73,73,75))
+        btn1.Bind(wx.EVT_BUTTON,self.doit)
+        
+        btn2 = wx.Button(self.panel, label='Cancel', size=(70, 30))
+        btn2.SetForegroundColour(wx.Colour(73,73,75))
+        btn2.Bind(wx.EVT_BUTTON,self.close)
+        
+        hbox.Add(btn2, 1, wx.ALIGN_CENTER_HORIZONTAL|wx.RIGHT, border = 10)
+        hbox.Add(btn1, 1, wx.ALIGN_CENTER_HORIZONTAL|wx.LEFT, border = 10)
+        
+        vbox.Add(qq22, 1, wx.ALIGN_CENTER_HORIZONTAL| wx.TOP, 10)
+        vbox.Add(hbox, 1, wx.ALIGN_CENTER_HORIZONTAL| wx.TOP, 10)
+        self.panel.SetSizer(vbox)
+        self.Show()
+        
+    def doit(self,event):
+        #print "test"
+        #skeinforge_profile.AddProfile.addSelection(skeinforge_profile.AddProfile())
+        #print archive.getProfilesPath('extrusion.csv')
+        #print archive.getProfilesPath()
+        #print skeinforge_profile.getProfileDirectory()
+        #print os.path.join( "skeinforge_application\profiles\extrusion\1.75mm-Medium Res",skeinforge_profile.getProfileDirectory() )
+        #print defaultProfilePath
+        #print archive.getProfilesPath()
+        #print os.listdir(defaultProfilePath)
+        
+
+                    
+        
+        if wx.GetApp().TopWindow.getCurrentProfile() in self.GetParent().sliceWindow.defaultProfiles:
+            GenericMessage("Cannot Delete Profile","You cannot delete a default profile",345)
+        else :
+        
+            defaultProfilePath = os.path.join(archive.getSkeinforgePath('profiles\extrusion'), wx.GetApp().TopWindow.getCurrentProfile())
+            settings.deleteDirectory(archive.getProfilesPath(),skeinforge_profile.getProfileDirectory())
+
+            GenericMessage("Deleted Profile","Profile " + wx.GetApp().TopWindow.getCurrentProfile() + " deleted",345)
+            
+            pluginModule = skeinforge_profile.getCraftTypePluginModule()
+            profilePluginSettings = settings.getReadRepository(pluginModule.getNewRepository())
+            self.GetParent().updateCurrentProfile( profilePluginSettings.profileList.value[0] )
+            self.GetParent().sliceWindow.refreshAllEntries()
+            self.GetParent().sliceWindow.cb.SetStringSelection(wx.GetApp().TopWindow.getCurrentProfile())
+            self.GetParent().sliceWindow.refreshProfileNames(event)
+     
+        self.Close(True)
+        
+    def close(self,ev):
+        self.Close(True)
+        
+class RestoreDefaultPromt(wx.Frame):
+    title = "Restore Profile Default"
+    def __init__(self):
+
+        wx.Frame.__init__(self, wx.GetApp().TopWindow, title=self.title, size = (360,130))
+        self.panel = wx.Panel(self)
+
+        self.panel.SetBackgroundColour(wx.Colour(73,73,75))
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        hbox = wx.BoxSizer(wx.HORIZONTAL)
+        text = "Are you sure you would like to restore the\n" + wx.GetApp().TopWindow.getCurrentProfile() + " profile to its defaults?"
+        qq22=wx.StaticText(self.panel,-1, text)
+        font2 = wx.Font(9, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        qq22.SetFont(font2)
+        qq22.SetForegroundColour((255,255,255)) # set text color
+        
+        btn1 = wx.Button(self.panel, label='Ok', size=(70, 30))
+        btn1.SetForegroundColour(wx.Colour(73,73,75))
+        btn1.Bind(wx.EVT_BUTTON,self.doit)
+        
+        btn2 = wx.Button(self.panel, label='Cancel', size=(70, 30))
+        btn2.SetForegroundColour(wx.Colour(73,73,75))
+        btn2.Bind(wx.EVT_BUTTON,self.close)
+        
+        hbox.Add(btn2, 1, wx.ALIGN_CENTER_HORIZONTAL|wx.RIGHT, border = 10)
+        hbox.Add(btn1, 1, wx.ALIGN_CENTER_HORIZONTAL|wx.LEFT, border = 10)
+        
+        vbox.Add(qq22, 1, wx.ALIGN_CENTER_HORIZONTAL| wx.TOP, 10)
+        vbox.Add(hbox, 1, wx.ALIGN_CENTER_HORIZONTAL| wx.TOP, 10)
+
+        self.panel.SetSizer(vbox)
+        self.Show()
+        
+    def doit(self,event):
+        #print "test"
+        #skeinforge_profile.AddProfile.addSelection(skeinforge_profile.AddProfile())
+        #print archive.getProfilesPath('extrusion.csv')
+        #print archive.getProfilesPath()
+        #print skeinforge_profile.getProfileDirectory()
+        #print os.path.join( "skeinforge_application\profiles\extrusion\1.75mm-Medium Res",skeinforge_profile.getProfileDirectory() )
+        defaultProfilePath = os.path.join(archive.getSkeinforgePath('profiles\extrusion'), wx.GetApp().TopWindow.getCurrentProfile())
+        #print defaultProfilePath
+        #print archive.getProfilesPath()
+        settings.deleteDirectory(archive.getProfilesPath(),skeinforge_profile.getProfileDirectory())
+        #print os.listdir(defaultProfilePath)
+        
+        def copytree(src, dst, symlinks=False, ignore=None):
+            #print src
+            #print dst
+            if not os.path.exists(dst):
+                os.makedirs(dst)
+            else:
+                print "IT EXISTS"
+            for item in os.listdir(src):
+                s = os.path.join(src, item)
+                d = os.path.join(dst, item)
+                if os.path.isdir(s):
+                    shutil.copytree(s, d, symlinks, ignore)
+                else:
+                    shutil.copy2(s, d)
+                    
+        copytree( defaultProfilePath,  os.path.join(archive.getProfilesPath('extrusion'),wx.GetApp().TopWindow.getCurrentProfile()) )
+        #print self.parent(self)
+        self.GetParent().sliceWindow.refreshAllEntries()    
+        GenericMessage("Default Settings Restored","Profile " + wx.GetApp().TopWindow.getCurrentProfile() + " default settings restored",345)
+        self.Close(True)
+        
+    def close(self,ev):
+        self.Close(True)
+        
+
+        
+class GenericMessage(wx.Frame):
+    title = ""
+    def __init__(self,frametitle,message,windowSize):
+        wx.Frame.__init__(self, wx.GetApp().TopWindow, title=frametitle, size = (windowSize,120))
+        self.panel2 = wx.Panel(self)
+
+        self.panel2.SetBackgroundColour(wx.Colour(73,73,75))
+        vbox2 = wx.BoxSizer(wx.VERTICAL)
+        hbox = wx.BoxSizer(wx.HORIZONTAL)
+
+        qq223=wx.StaticText(self.panel2,-1, message)
+        font2 = wx.Font(9, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        qq223.SetFont(font2)
+        qq223.SetForegroundColour((255,255,255)) # set text color
+        
+        btn11 = wx.Button(self.panel2, label='Ok', size=(70, 30))
+        btn11.SetForegroundColour(wx.Colour(73,73,75))
+        btn11.Bind(wx.EVT_BUTTON,self.close)
+        
+        
+        hbox.Add(btn11, 1, wx.ALIGN_CENTER_HORIZONTAL)
+
+        vbox2.Add(qq223, 1, wx.ALIGN_CENTER_HORIZONTAL| wx.TOP, 10)
+        vbox2.Add(hbox, 1, wx.ALIGN_CENTER_HORIZONTAL| wx.TOP, 10)
+        self.panel2.SetSizer(vbox2)
+        self.Show()
+    def close(self,ev):
+        self.Close(True)
+        
+        """"
+class SliceMessage(wx.Frame):
+    title = "Slicing Settings Saved"
+    def __init__(self):
+        wx.Frame.__init__(self, wx.GetApp().TopWindow, title=self.title, size = (220,120))
+        self.panel = wx.Panel(self)
+
+        self.panel.SetBackgroundColour(wx.Colour(73,73,75))
+        vbox = wx.BoxSizer(wx.VERTICAL)
+
+        qq22=wx.StaticText(self.panel,-1, "Slicing Settings Saved")
+        font2 = wx.Font(9, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        qq22.SetFont(font2)
+        qq22.SetForegroundColour((255,255,255)) # set text color
+        
+        btn1 = wx.Button(self.panel, label='Ok', size=(55, 20))
+        btn1.SetForegroundColour(wx.Colour(73,73,75))
+        btn1.Bind(wx.EVT_BUTTON,self.close)
+        vbox.Add(qq22, 1, wx.ALIGN_CENTER_HORIZONTAL| wx.TOP, 10)
+        vbox.Add(btn1, 1, wx.ALIGN_CENTER_HORIZONTAL)
+        self.panel.SetSizer(vbox)
+        self.Show()
+    def close(self,ev):
+        self.Close(True)
+        
+class defaultRestoredMessage(wx.Frame):
+    title = "Slicing Settings Saved"
+    def __init__(self,name):
+        wx.Frame.__init__(self, wx.GetApp().TopWindow, title=self.title, size = (345,120))
+        self.panel = wx.Panel(self)
+
+        self.panel.SetBackgroundColour(wx.Colour(73,73,75))
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        text = "Profile " + name + " default settings restored"
+        qq22=wx.StaticText(self.panel,-1, text)
+        font2 = wx.Font(9, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        qq22.SetFont(font2)
+        qq22.SetForegroundColour((255,255,255)) # set text color
+        btn1 = wx.Button(self.panel, label='Ok', size=(50, 20))
+        btn1.SetForegroundColour(wx.Colour(73,73,75))
+        btn1.Bind(wx.EVT_BUTTON,self.close)
+        vbox.Add(qq22, 1, wx.ALIGN_CENTER_HORIZONTAL| wx.TOP, 10)
+        vbox.Add(btn1, 1, wx.ALIGN_CENTER_HORIZONTAL)
+        self.panel.SetSizer(vbox)
+        self.Show()
+    def close(self,ev):
+        self.Close(True)
+        """
+        
+class AboutFrame2(wx.Frame):
+    title = "About Coordia"
+    def __init__(self):
+        
+        wx.Frame.__init__(self, wx.GetApp().TopWindow, title=self.title, size = (400,200))
+        self.panel = wx.Panel(self)
+        self.panel.SetBackgroundColour(wx.Colour(73,73,75))
+
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        
+        qq22=wx.StaticText(self.panel,-1, "Coordia RC"+versionString+" by Tinkerine Studio")
+        font2 = wx.Font(9, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        qq22.SetFont(font2)
+        qq22.SetForegroundColour((255,255,255)) # set text color
+
+        qq33=wx.StaticText(self.panel,-1, "Visit us at www.tinkerines.com")
+        font2 = wx.Font(9, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
+        qq33.SetFont(font2)
+        qq33.SetForegroundColour((255,255,255)) # set text color
+        
+        #btn1 = wx.Button(self.panel, label='Ok', size=(70, 20))
+        #btn1.SetForegroundColour(wx.Colour(73,73,75))
+        #btn1.Bind(wx.EVT_BUTTON,self.close)
+        vbox.Add(qq22, -1, wx.ALIGN_CENTER_HORIZONTAL|wx.TOP, 60)
+        vbox.Add(qq33, -1, wx.ALIGN_CENTER_HORIZONTAL)
+        #vbox.Add(btn1, 1, wx.ALIGN_CENTER_HORIZONTAL)
+        self.panel.SetSizer(vbox)
+        self.Show()
+    def close(self,ev):
+        self.Close(True)
+
+        
+        
 class progressbar(wx.Panel):
     def __init__(self,parent,size=(111,111),title="",maxval=600):
         wx.Panel.__init__(self,parent,-1,size=size)
@@ -2170,10 +3407,10 @@ class progressbar(wx.Panel):
         self.width,self.height=size
         self.title=title
         self.max=maxval
-		
+
     #def Refresh(self):
     #    wx.CallAfter(self.Refresh)
-	
+
     def repaint(self,ev):
         dc=wx.PaintDC(self)
         dc.Clear()
@@ -2192,7 +3429,18 @@ class progressbar(wx.Panel):
         #if main.curlayer:
         #    print("cool")
         #    dc.DrawRectangle(0,0,self.width/(main.fractioncomplete),100) #justin: green thing
-
+def checkEntry(type,category):
+    csv.register_dialect('tab', delimiter='\t')
+    filepath = category + ".csv"
+    in_file = os.path.join(archive.getProfilesPath(skeinforge_profile.getProfileDirectory()),filepath)
+    #print in_file
+    row_reader = csv.reader(open(in_file, "rb"), 'tab')
+    for row in row_reader:
+        if type == row[0]:
+            #print "abc " + type + " " + row[0]
+            return row[1]
+    return "NOTHING"
+        
 def findlastletterindex(word, letter):
     lastfound = -1
     index = 0
@@ -2201,8 +3449,8 @@ def findlastletterindex(word, letter):
             lastfound = index
         index = index + 1
     return lastfound
-	
-	
+
+
 def findnthletterindex(word, letter, nth):
     numfound = 0
     index = 0
@@ -2213,7 +3461,7 @@ def findnthletterindex(word, letter, nth):
                 return index
         index = index + 1
     return -1
-	
+
 def countletters(word, letter):
 	numfound=0
 	index=0
@@ -2222,9 +3470,7 @@ def countletters(word, letter):
 			numfound = numfound + 1
 		index = index + 1
 	return numfound
-	
 
-    
 if __name__ == '__main__':
     app = wx.App(False)
     main = PronterWindow()
